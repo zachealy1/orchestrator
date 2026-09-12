@@ -190,7 +190,9 @@ describe("application keyboard shortcuts", () => {
   });
 
   it("opens, searches, toggles, and restores focus for shortcut overlays", async () => {
+    prepareSignedInRun();
     const { user } = await renderApp();
+    await screen.findByLabelText("Codex account");
     const analyticsButton = await screen.findByRole("button", {
       name: "Analytics",
     });
@@ -229,6 +231,16 @@ describe("application keyboard shortcuts", () => {
     await user.type(paletteSearch, "report bug");
     await user.click(screen.getByRole("option", { name: /Report a bug/ }));
     await waitFor(() => expect(mocks.openUrlMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("hides bug reporting from the command palette while signed out", async () => {
+    const { user } = await renderApp();
+    await screen.findByLabelText("Sign in to Codex");
+    await pressApplicationShortcut("KeyK", "k");
+    await user.type(screen.getByRole("combobox", { name: "Search commands" }), "report bug");
+    expect(screen.queryByRole("option", { name: /Report a bug/ })).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(mocks.openUrlMock).not.toHaveBeenCalled();
   });
 
   it("suppresses shortcuts for unrelated dialogs and ignores repeated events", async () => {

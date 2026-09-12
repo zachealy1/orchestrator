@@ -158,6 +158,7 @@ export function ApplicationCommandPalette({
               ref={inputRef}
               role="combobox"
               aria-label="Search commands"
+              spellCheck={false}
               aria-autocomplete="list"
               aria-controls={listboxId}
               aria-expanded="true"

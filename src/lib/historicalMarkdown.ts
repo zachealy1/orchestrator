@@ -6,6 +6,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
+import { rehypeMarkdownTables } from "./markdownPlugins";
 import {
   isPreviewableSummaryLink,
   normalizePreviewableMarkdownLinks,
@@ -46,6 +47,7 @@ const historicalMarkdownProcessor = unified()
   .use(remarkGfm)
   .use(remarkRehype)
   .use(rehypeSanitize, historicalMarkdownSchema)
+  .use(rehypeMarkdownTables)
   .use(markPreviewableLinks)
   .use(rehypeStringify);
 

@@ -1614,7 +1614,7 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveValue("First line\nSecond line");
   });
 
-  it("disables text substitutions and normalizes smart quotes back to typed quotes", () => {
+  it("enables spell check while disabling text substitutions and normalizing smart quotes", () => {
     const onPromptChange = vi.fn();
     renderControlledComposer({ onPromptChange });
     const promptInput = screen.getByLabelText("Prompt") as HTMLTextAreaElement;
@@ -1626,7 +1626,7 @@ describe("TaskComposer", () => {
     expect(promptInput).toHaveAttribute("data-enable-grammarly", "false");
     expect(promptInput).toHaveAttribute("data-gramm", "false");
     expect(promptInput).toHaveAttribute("data-gramm_editor", "false");
-    expect(promptInput).toHaveAttribute("spellcheck", "false");
+    expect(promptInput).toHaveAttribute("spellcheck", "true");
 
     fireEvent.change(promptInput, {
       target: { value: "\u201chello\u201d and \u2018world\u2019" },

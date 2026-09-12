@@ -346,7 +346,7 @@ describe("Application runtime scenarios 7", () => {
           expect.objectContaining({
             threadId: "child-thread-1",
             expectedTurnId: "child-turn-1",
-            input: [{ type: "text", text: "Check the failure path" }],
+            input: [{ type: "text", text: "Check the failure path", text_elements: [] }],
           }),
         ),
       );
@@ -1098,6 +1098,10 @@ describe("Application runtime scenarios 7", () => {
       });
 
       const approve = screen.getByRole("button", { name: /approve once/i });
+      expect(approve).toHaveAttribute(
+        "data-tooltip",
+        "Run only this requested command.",
+      );
       fireEvent.click(approve);
       fireEvent.click(approve);
       expect(mocks.resolveCodexServerRequestMock).toHaveBeenCalledTimes(1);
@@ -1189,9 +1193,14 @@ describe("Application runtime scenarios 7", () => {
         },
         { requestToken: "server-request-7-1-10" },
       );
-      await user.click(
-        screen.getByRole("button", { name: /approve command rule/i }),
+      const approveRule = screen.getByRole("button", {
+        name: /approve command rule/i,
+      });
+      expect(approveRule).toHaveAttribute(
+        "data-tooltip",
+        "Run this command and allow the proposed command prefix in the future: npm test This is broader than one operation.",
       );
+      await user.click(approveRule);
       expect(mocks.resolveCodexServerRequestMock).toHaveBeenLastCalledWith(
         7,
         10,
@@ -1506,17 +1515,18 @@ describe("Application runtime scenarios 7", () => {
           "Codex is blocked until you choose one of the native options.",
         ),
       ).not.toBeInTheDocument();
-      for (const label of [
-        "Approve once",
-        "Approve files for session",
-        "Reject changes",
-        "Cancel operation",
+      for (const [label, description] of [
+        ["Approve once", "Apply only these proposed file changes."],
+        [
+          "Approve files for session",
+          "Allow Codex's native session scope for these files. This is broader than one operation.",
+        ],
+        ["Reject changes", "Continue without applying these changes."],
+        ["Cancel operation", "Cancel this edit operation."],
       ]) {
         const action = within(approval).getByRole("button", { name: label });
-        expect(action).toHaveAttribute(
-          "data-tooltip",
-          expect.stringContaining(`${label}:`),
-        );
+        expect(action).toHaveAttribute("data-tooltip", description);
+        expect(action).toHaveAccessibleDescription(description);
         expect(action.querySelector("svg")).toBeInTheDocument();
       }
     });

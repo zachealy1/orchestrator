@@ -33,6 +33,7 @@ mod codex_engine;
 mod engine_probe;
 mod database;
 mod generated_images;
+mod goal_context;
 mod git;
 mod github;
 mod github_cli;
@@ -41,6 +42,8 @@ mod kanban_git;
 mod kanban_store;
 mod migrations;
 mod models;
+#[cfg(target_os = "macos")]
+mod native_spellcheck;
 mod paths;
 mod preflight;
 mod process;
@@ -101,6 +104,8 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             read_workspace_file_preview_chunk,
             read_workspace_file_preview_version,
             prepare_image_attachment,
+            goal_context::prepare_goal_context,
+            goal_context::discard_goal_context,
             inspect_dropped_context_paths,
             inspect_prompt_queue_context,
             create_chat_with_queued_prompt,
@@ -185,6 +190,9 @@ pub fn export_typescript_bindings(path: impl AsRef<Path>) -> Result<(), String> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    native_spellcheck::register_defaults();
+
     let command_builder = command_builder();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {

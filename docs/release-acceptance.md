@@ -1,6 +1,16 @@
 # Public beta acceptance record
 
-Status: **dual-architecture, updater-enabled publication remains unapproved** until its required gates below have evidence. The maintainer has separately approved a narrower Apple-Silicon-only manual experimental beta, as recorded below. Apple Developer ID/notarization is not required for that explicitly non-notarized distribution. Automated code checks do not replace clean-Mac and real update rehearsals.
+## Community beta.2 acceptance — 2026-09-12
+
+The maintainer reports having manually tested the release-branch changes and explicitly requested publication of **0.2.0-beta.2** for Apple Silicon and Intel on macOS 15+. Accept that report without adding another application-testing campaign or release rehearsal. The report does not identify individual scenarios, hardware, macOS versions, a clean-machine installation, or a two-version updater rehearsal; none of those results are inferred.
+
+The selected candidate is `3f0704303ddc2ef8be010d477ddc998176a7ed26`. Release preparation changes documentation, screenshots and publication guards, while retaining version 0.2.0-beta.2. Merge preparation into `release`, then merge `release` into `main` through ordinary pull requests and required `checks`. Publish from the resulting exact main SHA, which the version tag, workflow checkout and generated package receipts must all identify.
+
+Packaging verifies source/version/architecture, bundled resources, ad-hoc signing, independently signed updater packages, installer artwork and uploaded hashes. Each generated receipt retains `behavioralTesting: "not-performed"`: that field describes the packaging job, which does not launch the installer or perform an update rehearsal. It does not negate the maintainer's manual-testing report. Integrity results are generated from the actual packages, not asserted in advance.
+
+Existing required CI, code-owner review rules and signing/publication environment approvals remain in effect. Community publication requires no Apple account, notarization, dedicated AI test account or separate testing-approval SHA. Publish both architectures before creating the updater feed; preserve beta.1 and all published artifacts unchanged. Screenshot recapture is documentation work using the isolated fictional demo, not a release-acceptance test campaign.
+
+The earlier records below remain historical evidence and limitations. Their pending/manual gates apply to the distributions described there, not additional gates for this community release. The separate notarized and automated engine-upgrade workflows retain their own validation requirements.
 
 ## Manual experimental beta approval — 2026-09-08
 
@@ -17,7 +27,7 @@ The full native lockfile audit remains non-zero. Inspection on 2026-09-08 used t
 
 Known maintenance debt in the selected graph: `paste` 1.0.15 is a Specta/Tauri compile-time macro dependency; the five `unic-*` 0.9 crates are Tauri/urlpattern dependencies. The reported notices concern lack of maintenance, not an identified runtime vulnerability. These remain disclosed follow-up work rather than being labelled resolved. The yanked SQLite/flume dependency `spin` 0.9.8 has been updated to the compatible 0.9.9 patch; no blanket audit exemption is introduced. New vulnerability findings require a new applicability review before another release.
 
-## Deferred updater-enabled acceptance matrix
+## Historical deferred acceptance matrix
 
 Record app/engine versions, source SHA, final package SHA-256 values, tester, date, macOS version and CPU architecture for each run. Use dedicated repositories/branches only. Record every remote branch and commit; do not delete remote test branches without approval.
 
@@ -47,7 +57,7 @@ Record app/engine versions, source SHA, final package SHA-256 values, tester, da
 
 In the rows above, “signed-build” testing means the actual selected distribution's packages, including an ad-hoc app plus independently signed updater for community beta. Community acceptance must additionally record first-launch Open Anyway behaviour and any recurring Accessibility/Screen Recording prompts after updates on both supported architectures and macOS versions. Never turn off Gatekeeper globally.
 
-Do not mark blocked/manual gates passed on the basis of mocks, a build, or a local app launch. Keep CODEX_AUTO_RELEASES_ENABLED and BETA_REHEARSAL_APPROVED false and COMMUNITY_BETA_APPROVED_SHA unset until the corresponding record is reviewed. Failed or missing required integration credentials must remain a failed release check, never a skipped success.
+These historical blocked/manual results have not been marked passed. CODEX_AUTO_RELEASES_ENABLED and BETA_REHEARSAL_APPROVED remain false for the separate notarized automation. The current community policy does not require COMMUNITY_BETA_APPROVED_SHA or authenticated integration checks.
 
 ## 2026-09-08 community preparation checks
 

@@ -23,7 +23,6 @@ import {
   parseRunExecutionSettings,
   serializeRunExecutionSettings,
 } from "../../lib/runExecutionSettings";
-import { improvePrompt } from "../../lib/taskAnalysis";
 import {
   createKanbanNativeTaskWorkspaceBinding,
   parseNativeTaskWorkspaceBinding,
@@ -39,6 +38,7 @@ import type {
   KanbanAttemptControl,
   KanbanAttemptStateController,
 } from "./attemptLifecycle";
+import { assertKanbanTargetReady } from "./boardPreferences";
 import { prepareKanbanRepositoryExecution } from "./repositoryExecution";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
@@ -175,6 +175,7 @@ export function createKanbanRuntimeController<
     const dependencies = getDependencies();
     const state = dependencies.getState();
     const workspace = workspaceForCard(state, card);
+    assertKanbanTargetReady(card.workspaceId);
     const reservationKey = `${card.workspaceId}:${card.chatId}`;
     if (
       launchReservations.has(reservationKey) ||
@@ -285,6 +286,7 @@ export function createKanbanRuntimeController<
       { accessMode: executionSettings.accessMode },
       executionSettings.mode,
     );
+    assertKanbanTargetReady(card.workspaceId);
     launchReservations.add(reservationKey);
     try {
       const claimed = await native.claimAttempt({
@@ -452,7 +454,6 @@ export function createKanbanRuntimeController<
           computerUseEnabled: runExecutionSettings.computerUseEnabled,
           model: runExecutionSettings.model,
           effort: runExecutionSettings.reasoningEffort,
-          improvedPrompt: improvePrompt(effectivePrompt),
           contextFiles: runExecutionSettings.contextFiles,
           selectedSkills: runExecutionSettings.selectedSkills,
           goalMode: runExecutionSettings.goalMode,

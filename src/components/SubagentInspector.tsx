@@ -22,7 +22,7 @@ import {
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import { Virtuoso } from "react-virtuoso";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import { emptyRunView, type RunViewState } from "../lib/codexEventReducer";
@@ -479,6 +479,7 @@ export const SubagentInspector = memo(function SubagentInspector({
           <span className="sr-only">Send instruction to subagent</span>
           <textarea
             rows={2}
+            spellCheck={true}
             value={instruction}
             placeholder={
               canSteer
@@ -689,7 +690,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
               >
                 <ReactMarkdown
                   components={SUBAGENT_MARKDOWN_COMPONENTS}
-                  remarkPlugins={[remarkGfm]}
+                  {...TRANSCRIPT_MARKDOWN_PLUGINS}
                   skipHtml
                   urlTransform={transcriptMarkdownUrlTransform}
                 >
@@ -815,7 +816,14 @@ function renderSubagentStreamItem(item: SubagentTranscriptItem): ReactNode[] {
   if (item.kind === "assistant") {
     return [
       <div className="stream-message" key={item.id}>
-        {item.text}
+        <ReactMarkdown
+          components={SUBAGENT_MARKDOWN_COMPONENTS}
+          {...TRANSCRIPT_MARKDOWN_PLUGINS}
+          skipHtml
+          urlTransform={transcriptMarkdownUrlTransform}
+        >
+          {item.text}
+        </ReactMarkdown>
       </div>,
     ];
   }

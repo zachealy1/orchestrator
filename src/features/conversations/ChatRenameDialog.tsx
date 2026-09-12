@@ -61,6 +61,7 @@ export function ChatRenameDialog({
           <span>Title</span>
           <input
             ref={inputRef}
+            spellCheck={true}
             value={title}
             disabled={pending}
             onChange={(event) => onTitleChange(event.currentTarget.value)}

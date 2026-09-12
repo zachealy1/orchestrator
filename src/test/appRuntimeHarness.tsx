@@ -1,3 +1,4 @@
+import { prepareAttachmentMocks } from "./attachmentMocks";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -48,6 +49,8 @@ const mocks = vi.hoisted(() => ({
   readWorkspaceFilePreviewChunkMock: vi.fn(),
   readWorkspaceFilePreviewVersionMock: vi.fn(),
   prepareImageAttachmentMock: vi.fn(),
+  prepareGoalContextMock: vi.fn(),
+  discardGoalContextMock: vi.fn(),
   inspectDroppedContextPathsMock: vi.fn(),
   inspectPromptQueueContextMock: vi.fn(),
   probeLocalWebPreviewMock: vi.fn(),
@@ -355,6 +358,8 @@ vi.mock("react-virtuoso", async () => {
 });
 
 vi.mock("../codexClient", () => ({
+  prepareGoalContext: mocks.prepareGoalContextMock,
+  discardGoalContext: mocks.discardGoalContextMock,
   cancelCodexLogin: mocks.cancelCodexLoginMock,
   codexDefaultProfileRpc: mocks.codexDefaultProfileRpcMock,
   codexRpc: mocks.codexRpcMock,
@@ -614,7 +619,6 @@ export const preflight = {
   tokenEstimate: 42,
   contextBudget: 128000,
   routeRecommendation: "direct-run" as const,
-  improvedPrompt: "Objective\n\nFix auth",
   checks: [],
   recommendations: [],
 };
@@ -1124,6 +1128,7 @@ export function prepareDefaults() {
   mocks.listCodexSkillsMock.mockResolvedValue([
     {
       id: "browser:control-in-app-browser",
+      path: "/skills/browser/SKILL.md",
       name: "browser:control-in-app-browser",
       description: "Control the selected browser for local web testing.",
     },
@@ -1170,18 +1175,7 @@ export function prepareDefaults() {
     version: "preview-v1",
   });
   mocks.readWorkspaceFilePreviewVersionMock.mockResolvedValue("preview-v1");
-  mocks.prepareImageAttachmentMock.mockImplementation(async (path: string) =>
-    /\.(?:gif|jpe?g|png|webp)$/i.test(path)
-      ? {
-          path,
-          mimeType: "image/png",
-          width: 640,
-          height: 480,
-          thumbnailDataUrl:
-            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
-        }
-      : null,
-  );
+  prepareAttachmentMocks(mocks);
   mocks.inspectDroppedContextPathsMock.mockImplementation(
     async (paths: string[]) => ({
       files: paths.map((path) => ({

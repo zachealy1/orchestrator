@@ -18,11 +18,13 @@ test("community signing needs independent update keys, never Apple credentials",
   assert.throws(() => requireSigning("notarized", keys), /APPLE/);
   for (const key of Object.keys(keys)) assert.throws(() => requireSigning("community", { ...keys, [key]: "" }), /missing/);
 });
-test("publication approval cannot cross profiles or source revisions", () => {
-  assert.throws(() => requirePublicationApproval("community", sourceSha, { BETA_REHEARSAL_APPROVED: "true" }));
-  assert.throws(() => requirePublicationApproval("community", sourceSha, { COMMUNITY_BETA_APPROVED_SHA: "b".repeat(40) }));
+test("community dispatch requires an exact source while notarized publication retains rehearsal approval", () => {
+  assert.doesNotThrow(() => requirePublicationApproval("community", sourceSha, {}));
+  for (const invalid of ["release", "main", "", undefined]) {
+    assert.throws(() => requirePublicationApproval("community", invalid, {}));
+  }
   assert.throws(() => requirePublicationApproval("notarized", sourceSha, { COMMUNITY_BETA_APPROVED_SHA: sourceSha }));
-  assert.doesNotThrow(() => requirePublicationApproval("community", sourceSha, { COMMUNITY_BETA_APPROVED_SHA: sourceSha }));
+  assert.doesNotThrow(() => requirePublicationApproval("notarized", sourceSha, { BETA_REHEARSAL_APPROVED: "true" }));
 });
 test("packaging receives the public verification key but never serializes secrets into Tauri configuration", () => {
   const config = packagingConfig("community", keys);
@@ -50,11 +52,12 @@ test("receipts bind version, source, architecture, trust profile and every artif
         await writeFile(join(root, name), bytes); assets.push({ name, digest: sha256(bytes) });
       }
       const receipt = { schemaVersion: 1, sourceSha, version, architecture: arch, distribution: "community", notarized: false,
-        updaterSignatureVerified: true, artifacts: Object.fromEntries(assets.map(asset => [asset.name, asset.digest])) };
+        updaterSignatureVerified: true, behavioralTesting: "not-performed", artifacts: Object.fromEntries(assets.map(asset => [asset.name, asset.digest])) };
       const options = { profile: "community", version, sourceSha, arch, assets };
       validatePackageReceipt(receipt, options);
       for (const changed of [{ sourceSha: "b".repeat(40) }, { version: "0.2.0-beta.2" }, { architecture: "wrong" },
-        { distribution: "notarized" }, { notarized: true }, { updaterSignatureVerified: false }, { artifacts: {} }]) {
+        { distribution: "notarized" }, { notarized: true }, { updaterSignatureVerified: false },
+        { behavioralTesting: undefined }, { behavioralTesting: "passed" }, { artifacts: {} }]) {
         assert.throws(() => validatePackageReceipt({ ...receipt, ...changed }, options));
       }
       const name = `verification-${arch}.json`, bytes = JSON.stringify(receipt);
@@ -74,7 +77,7 @@ test("receipts bind version, source, architecture, trust profile and every artif
 test("staging cannot target another repo, a contributor branch or a published release", () => {
   const env = { GITHUB_REPOSITORY: "zachealy1/orchestrator", GITHUB_REF: "refs/heads/main", RELEASE_SOURCE_SHA: sourceSha, STAGING_TAG: "community-build-123-1" };
   const target = stagingTarget(env);
-  for (const changed of [{ GITHUB_REPOSITORY: "someone/fork" }, { GITHUB_REF: "refs/pull/1/merge" }, { RELEASE_SOURCE_SHA: "main" }, { STAGING_TAG: "v0.2.0-beta.1" }]) {
+  for (const changed of [{ GITHUB_REPOSITORY: "someone/fork" }, { GITHUB_REF: "refs/pull/1/merge" }, { GITHUB_REF: "refs/heads/release" }, { RELEASE_SOURCE_SHA: "release" }, { STAGING_TAG: "v0.2.0-beta.1" }]) {
     assert.throws(() => stagingTarget({ ...env, ...changed }));
   }
   const release = { draft: true, tag_name: target.tag, target_commitish: sourceSha, body: COMMUNITY_NOTICE };
@@ -83,11 +86,11 @@ test("staging cannot target another repo, a contributor branch or a published re
     assert.throws(() => validateStagingRelease({ ...release, ...changed }, target));
   }
 });
-test("the free workflow retains validation and isolated secrets without paid artifact handoff", async () => {
+test("the free workflow requires manual release dispatch, both packages and isolated secrets", async () => {
   const workflow = await readFile(".github/workflows/community-beta.yml", "utf8");
   assert.doesNotMatch(workflow, /APPLE_|upload-artifact|download-artifact|pull_request:|pull_request_target:|secrets: inherit/);
-  for (const expected of ["./.github/workflows/validate-release.yml", "macos-15-intel", "RELEASE_TEST_CODEX_AUTH_JSON", "TAURI_SIGNING_PRIVATE_KEY", "COMMUNITY_BETA_APPROVED_SHA", "environment: public-beta-signing", "environment: public-beta-publishing", "group: orchestrator-publication"]) assert.ok(workflow.includes(expected));
-  assert.match(workflow, /needs: \[authorize, validate\]/);
+  for (const expected of ["workflow_dispatch:", "macos-15-intel", "TAURI_SIGNING_PRIVATE_KEY", "environment: public-beta-signing", "environment: public-beta-publishing", "group: orchestrator-publication", 'test "$GITHUB_REF" = refs/heads/main', 'git merge-base --is-ancestor "$REF" origin/main']) assert.ok(workflow.includes(expected));
+  assert.match(workflow, /needs: \[authorize, package\]/);
   assert.match(workflow, /RELEASE_SOURCE_SHA: \$\{\{ needs.authorize.outputs.sha \}\}/);
 });
 

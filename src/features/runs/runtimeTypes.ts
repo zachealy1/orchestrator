@@ -21,6 +21,7 @@ import type {
 } from "../kanban/attemptLifecycle";
 import type { NativeTaskWorkspaceBinding } from "../../lib/nativeTaskWorkspaceBinding";
 import type { InteractionSession } from "../interaction/types";
+import type { CodexTurnInput } from "../../lib/imageAttachments";
 
 export type {
   KanbanAttemptPersistenceResult,
@@ -60,6 +61,7 @@ export type ActiveRunControl = {
   interactionMode: RunInteractionMode;
   acceptsThreadContinuation: boolean;
   goal: ThreadGoalState | null;
+  goalAuthoredObjective?: string;
   goalActionPending: GoalProgressAction | null;
   goalActionError: string | null;
   goalTurnCompleted: boolean;
@@ -145,7 +147,6 @@ export type RunSetupSnapshot = {
   computerUseEnabled: boolean;
   model: string | null;
   effort: string | null;
-  improvedPrompt: string;
   contextFiles: ComposerContextFile[];
   selectedSkills: SelectedComposerSkill[];
   goalMode: boolean;
@@ -199,6 +200,7 @@ export type RunSetupFailureState = {
 };
 export type RunTurnPayloadStageResult = {
   text: string;
+  input: CodexTurnInput[];
   additionalContext: Record<string, AdditionalContextEntry> | null;
 };
 export type StartedRunThread = {

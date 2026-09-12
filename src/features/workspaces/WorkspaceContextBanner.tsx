@@ -1,8 +1,6 @@
 import {
   Columns3,
   Folder,
-  GitBranch,
-  GitBranchPlus,
   GitCommitHorizontal,
   Loader2,
   MessageSquare,
@@ -15,7 +13,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   RefCallback,
 } from "react";
-import { ComposerSelect } from "../../components/ComposerSelect";
+import { BranchSelect } from "./BranchSelect";
 import { getContextUsageDisplay } from "../../lib/contextUsage";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { windowDragRegionValue } from "../../lib/windowDragging";
@@ -292,34 +290,12 @@ export function WorkspaceContextBanner({
         {surfaceMode === "chat" ? (
           <>
             {branchManagementAvailable ? (
-              <ComposerSelect
-                ariaLabel="Branch"
-                value={branch ?? ""}
-                options={[
-                  ...branches.map((candidate) => ({
-                    value: candidate,
-                    label: candidate,
-                  })),
-                  ...(onCreateBranch
-                    ? [
-                        {
-                          id: "create-branch",
-                          value: "",
-                          label: "Create branch...",
-                          action: true,
-                          icon: <GitBranchPlus size={14} />,
-                        },
-                      ]
-                    : []),
-                ]}
-                placeholder="No branch"
-                icon={<GitBranch size={14} />}
-                className="workspace-branch-select"
+              <BranchSelect
+                branch={branch}
+                branches={branches}
                 disabled={branchSelectorDisabled}
                 onChange={onBranchChange}
-                onAction={(actionId) => {
-                  if (actionId === "create-branch") onCreateBranch?.();
-                }}
+                onCreateBranch={onCreateBranch}
               />
             ) : null}
             <div className="workspace-git-action">
