@@ -1,3 +1,5 @@
+import { createChatTitleActions } from "./chatTitleActions";
+import { prepareCardBranchTitle } from "../features/kanban/branchTitleReadiness";
 import { useModelCatalog } from "../features/codex/useModelCatalog";
 import { useReleaseServices } from "./useReleaseServices";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -104,7 +106,6 @@ import {
 import {
   fallbackChatTitle,
   GENERATING_CHAT_TITLE,
-  sanitizeGeneratedChatTitle,
 } from "../lib/chatTitles";
 import { AnalyticsSummary } from "../components/AnalyticsSummary";
 import { ApplicationCommandPalette } from "../components/ApplicationCommandPalette";
@@ -1327,7 +1328,6 @@ function App() {
   } | null>(null);
   const transcriptLinkErrorRevisionRef = useRef(0);
   const activeViewRef = useRef<AppView>("task");
-  const chatTitleGenerationsInFlightRef = useRef(new Set<number>());
   const workspaceTaskMemories = appServices.workspaceTaskMemories;
   const taskChatTranscriptRef =
     useRef<VirtuosoTaskChatTranscriptHandle | null>(null);
@@ -4532,50 +4532,14 @@ function App() {
     return reconciliation;
   }
 
-  function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
-    if (chatTitleGenerationsInFlightRef.current.has(request.chatId)) return;
-    chatTitleGenerationsInFlightRef.current.add(request.chatId);
-
-    void (async () => {
-      try {
-        if (!(await claimChatTitleGeneration(request.chatId))) return;
-        const result = await generateChatTitle({
-          workspacePath: request.workspacePath,
-          accountId: request.accountId,
-          model: request.model,
-          initialPrompt: request.initialPrompt,
-        });
-        const title = sanitizeGeneratedChatTitle(result.title);
-        if (!title) {
-          throw new Error("Codex returned an invalid conversation title");
-        }
-        if (await completeChatTitleGeneration(request.chatId, title)) {
-          updateHistoryChatTitle(request.chatId, title, "complete");
-          await syncSharedChatTitle(request.chatId, title).catch((error) => {
-            console.warn("Could not synchronize the generated Codex title", error);
-          });
-        }
-      } catch (error) {
-        console.warn(
-          `AI chat title generation failed for chat ${request.chatId}; using the prompt-based fallback.`,
-          error,
-        );
-        if (await failChatTitleGeneration(request.chatId).catch(() => false)) {
-          updateHistoryChatTitle(
-            request.chatId,
-            request.fallbackTitle,
-            "failed",
-          );
-          setStatusMessage(
-            "AI title generation failed; using the prompt-based title.",
-          );
-        }
-      } finally {
-        chatTitleGenerationsInFlightRef.current.delete(request.chatId);
-        request.onSettled?.();
-      }
-    })();
-  }
+  const { ensureChatTitleReady, startChatTitleGeneration } = createChatTitleActions({
+    coordinator: appServices.chatTitles,
+    titles: {
+      load: getChatRecord, claim: claimChatTitleGeneration, generate: generateChatTitle,
+      complete: completeChatTitleGeneration, fail: failChatTitleGeneration,
+    },
+    updateHistoryChatTitle, syncSharedChatTitle, applicationNotifications, setStatusMessage,
+  });
 
   async function loadWorkspaceRunHistory(
     workspaceOrId: Workspace | number,
@@ -8093,10 +8057,11 @@ function App() {
     let createdChatId: number | null = null;
     let incompleteBindings: KanbanGitBinding[] = [];
     try {
+      const sourceChat = await ensureChatTitleReady(dialog.chat.id, workspace.path);
       const created = await createChat({
         workspaceId: dialog.chat.workspace_id,
         accountId: dialog.chat.account_id,
-        title: `${dialog.chat.title} continuation`,
+        title: `${sourceChat.title} continuation`,
         status: "starting",
         continuedFromChatId: dialog.chat.id,
         continuationKind: "worktree",
@@ -8109,7 +8074,7 @@ function App() {
         !findRunControlByChat(dialog.chat.workspace_id, dialog.chat.id);
       const result = await provisionKanbanGit({
         cardId: `chat-${created.id}`,
-        cardSlug: dialog.chat.title,
+        cardSlug: sourceChat.title,
         includeDirty: includeDirtyChanges,
         repositories: dialog.repositories.map((repository) => ({
           repositoryPath: repository.path,
@@ -14220,10 +14185,10 @@ function App() {
       );
       continuationBindings = await reconcileChatRepositoriesForWorkspace({
         chatId: chat.id,
-        chatTitle: chat.title,
         repositories: currentOverview.repositories,
         bindings: continuationBindings,
         dependencies: {
+          ensureTitle: async () => (await ensureChatTitleReady(chat.id, workspace.path)).title,
           expand: expandKanbanGit,
           save: saveChatWorktreeBindings,
           cleanup: cleanupKanbanGit,
@@ -14334,6 +14299,13 @@ function App() {
         workspace.path,
         await listWorkspaceGitStatus(workspace.path, true),
       ).repositories,
+    prepareCardTitle: async (card, repositories, signal) => {
+      const workspace = workspacesRef.current.find((candidate) => candidate.id === card.workspaceId);
+      if (!workspace) throw new Error("The card workspace is no longer available.");
+      return prepareCardBranchTitle(card, repositories, signal, (chatId, prompt, abortSignal) =>
+        ensureChatTitleReady(chatId, workspace.path, prompt, abortSignal, card.model),
+      );
+    },
     loadChat: getChatRecord,
     updateChat,
     getNextTurnIndex: getNextChatTurnIndex,

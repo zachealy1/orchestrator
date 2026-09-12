@@ -1121,6 +1121,52 @@ describe("Application runtime scenarios 9", () => {
     ).toEqual(["running"]);
   });
 
+  it("waits for a card title before provisioning and starts with the refreshed title", async () => {
+    prepareKanbanRun();
+    const initialAttempt = await mocks.claimKanbanAttemptMock.getMockImplementation()!();
+    const bindings = await mocks.loadKanbanGitBindingsMock();
+    let currentCard = { ...initialAttempt.card, title: "Generating title...", stateVersion: 1, executionState: "idle", currentAttemptId: null };
+    let chat = { ...workspaceChatFixture({ id: currentCard.chatId, title: currentCard.title }), title_generation_state: "pending" };
+    mocks.getChatRecordMock.mockImplementation(async () => chat);
+    mocks.loadKanbanGitBindingsMock.mockResolvedValue([]);
+    mocks.loadKanbanBoardMock.mockImplementation(async () => ({
+      workspaceId: 1, revision: 1, preferencesJson: "{}", columns: [], cards: [currentCard],
+    }));
+    let settle!: (value: { title: string }) => void;
+    mocks.generateChatTitleMock.mockImplementation(() => new Promise((resolve) => { settle = resolve; }));
+    mocks.completeChatTitleGenerationMock.mockImplementation(async (_id, title) => {
+      chat = { ...chat, title, title_generation_state: "complete" };
+      currentCard = { ...currentCard, title };
+      return true;
+    });
+    mocks.claimKanbanAttemptMock.mockImplementation(async () => ({
+      ...initialAttempt, card: { ...currentCard, stateVersion: 2, executionState: "starting" },
+    }));
+    mocks.provisionKanbanGitMock.mockResolvedValue({
+      cardId: currentCard.id, executionRoot: bindings[0].executionRoot,
+      repositories: bindings, errors: [], complete: true, rolledBack: false,
+    });
+    mocks.saveKanbanGitBindingsMock.mockImplementation(async (_card, savedBindings) => {
+      mocks.loadKanbanGitBindingsMock.mockResolvedValue(savedBindings);
+      return savedBindings;
+    });
+    const { user } = await renderApp();
+    await user.click(await screen.findByRole("radio", { name: "Kanban" }));
+    await user.click(screen.getByRole("button", { name: "Start test Kanban agent" }));
+    await waitFor(() => expect(mocks.generateChatTitleMock).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status", { name: "Waiting for title…" })).toBeInTheDocument();
+    expect(mocks.claimKanbanAttemptMock).not.toHaveBeenCalled();
+    expect(mocks.provisionKanbanGitMock).not.toHaveBeenCalled();
+    await act(async () => { settle({ title: "Fix readable branch names" }); });
+    await waitFor(() => expect(mocks.provisionKanbanGitMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cardSlug: "Fix readable branch names" }),
+    ));
+    await waitFor(() => expect(screen.queryByText("Waiting for title…")).not.toBeInTheDocument());
+    await waitFor(() => expect(mocks.updateKanbanAttemptMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "running" }),
+    ));
+  });
+
   it("retries newly provisioned binding persistence with the latest card version", async () => {
     prepareKanbanRun();
     const binding = {
@@ -1150,6 +1196,7 @@ describe("Application runtime scenarios 9", () => {
         mocks.loadKanbanGitBindingsMock.mockResolvedValue([binding]);
         return [binding];
       });
+    const initialAttempt = await mocks.claimKanbanAttemptMock.getMockImplementation()!();
     mocks.loadKanbanBoardMock.mockImplementation(async () => {
       if (mocks.claimKanbanAttemptMock.mock.results.length === 0) {
         return {
@@ -1157,7 +1204,7 @@ describe("Application runtime scenarios 9", () => {
           revision: 0,
           preferencesJson: "{}",
           columns: [],
-          cards: [],
+          cards: [{ ...initialAttempt.card, stateVersion: 1, executionState: "idle", currentAttemptId: null }],
         };
       }
       const claimed = await mocks.claimKanbanAttemptMock.mock.results[0].value;
@@ -1254,6 +1301,7 @@ describe("Application runtime scenarios 9", () => {
     mocks.saveKanbanGitBindingsMock.mockRejectedValue(
       new Error("Kanban binding storage unavailable"),
     );
+    const initialAttempt = await mocks.claimKanbanAttemptMock.getMockImplementation()!();
     mocks.loadKanbanBoardMock.mockImplementation(async () => {
       if (mocks.claimKanbanAttemptMock.mock.results.length === 0) {
         return {
@@ -1261,7 +1309,7 @@ describe("Application runtime scenarios 9", () => {
           revision: 0,
           preferencesJson: "{}",
           columns: [],
-          cards: [],
+          cards: [{ ...initialAttempt.card, stateVersion: 1, executionState: "idle", currentAttemptId: null }],
         };
       }
       const claimed = await mocks.claimKanbanAttemptMock.mock.results[0].value;

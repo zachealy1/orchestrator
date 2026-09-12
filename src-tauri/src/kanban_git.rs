@@ -19,6 +19,7 @@ use crate::{
 };
 
 const CARD_BRANCH_PREFIX: &str = "codex/";
+const MAX_CARD_BRANCH_SLUG_LENGTH: usize = 96;
 const MAX_CARD_ID_LENGTH: usize = 128;
 const MAX_BRANCH_ATTEMPTS: usize = 1_000;
 
@@ -307,6 +308,33 @@ fn branch_component(value: &str, maximum_length: usize) -> String {
         result.pop();
     }
     result
+}
+
+// Branch names have a different budget from on-disk repository components.
+fn card_branch_base(card_id: &str, title: Option<&str>) -> Result<String, String> {
+    let title = title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .ok_or("The card title is not ready; retry after title generation finishes")?;
+    let normalized = branch_component(title, usize::MAX);
+    if normalized == "generating-title" {
+        return Err("The card title is not ready; retry after title generation finishes".into());
+    }
+    let mut slug = String::new();
+    for word in normalized.split('-').filter(|word| !word.is_empty()) {
+        let separator = usize::from(!slug.is_empty());
+        if slug.len() + separator + word.len() > MAX_CARD_BRANCH_SLUG_LENGTH {
+            break;
+        }
+        if separator > 0 {
+            slug.push('-');
+        }
+        slug.push_str(word);
+    }
+    if slug.is_empty() {
+        slug = format!("card-{card_id}");
+    }
+    Ok(format!("{CARD_BRANCH_PREFIX}{slug}"))
 }
 
 fn safe_relative_path(value: &str) -> Result<String, String> {
@@ -1112,6 +1140,7 @@ fn provision_blocking(
     request: KanbanGitProvisionRequest,
 ) -> Result<KanbanGitProvisionResult, String> {
     validate_card_id(&request.card_id)?;
+    let branch_base = card_branch_base(&request.card_id, request.card_slug.as_deref())?;
     let repositories = prepare_repositories(&request)?;
     let execution_root = app_cards_root.join(&request.card_id);
     ensure_execution_root(app_cards_root, &execution_root)?;
@@ -1125,14 +1154,6 @@ fn provision_blocking(
     }
     fs::create_dir_all(&execution_root)
         .map_err(|error| format!("Unable to create card execution root: {error}"))?;
-
-    let slug_component = request
-        .card_slug
-        .as_deref()
-        .map(|slug| branch_component(slug, 32))
-        .filter(|slug| !slug.is_empty())
-        .unwrap_or_else(|| "card".to_string());
-    let branch_base = format!("{CARD_BRANCH_PREFIX}{slug_component}");
 
     let mut bindings = Vec::with_capacity(repositories.len());
     for repository in &repositories {
@@ -1181,6 +1202,7 @@ fn expand_blocking(
     request: KanbanGitExpandRequest,
 ) -> Result<KanbanGitProvisionResult, String> {
     validate_card_id(&request.card_id)?;
+    let branch_base = card_branch_base(&request.card_id, request.card_slug.as_deref())?;
     if request.existing_bindings.is_empty() {
         return Err("This card has no existing worktrees to expand".into());
     }
@@ -1229,13 +1251,6 @@ fn expand_blocking(
         }
     }
 
-    let slug_component = request
-        .card_slug
-        .as_deref()
-        .map(|slug| branch_component(slug, 32))
-        .filter(|slug| !slug.is_empty())
-        .unwrap_or_else(|| "card".to_string());
-    let branch_base = format!("{CARD_BRANCH_PREFIX}{slug_component}");
     let mut bindings = Vec::with_capacity(prepared.len());
     for repository in &prepared {
         match create_worktree(repository, &execution_root, &branch_base) {
@@ -2234,6 +2249,8 @@ pub(crate) async fn kanban_git_provision(
     app: AppHandle,
     request: KanbanGitProvisionRequest,
 ) -> Result<KanbanGitProvisionResult, String> {
+    validate_card_id(&request.card_id)?;
+    card_branch_base(&request.card_id, request.card_slug.as_deref())?;
     let root = cards_root(&app)?;
     run_blocking("provision Kanban worktrees", move || {
         provision_blocking(&root, request)
@@ -2247,6 +2264,8 @@ pub(crate) async fn kanban_git_expand(
     app: AppHandle,
     request: KanbanGitExpandRequest,
 ) -> Result<KanbanGitProvisionResult, String> {
+    validate_card_id(&request.card_id)?;
+    card_branch_base(&request.card_id, request.card_slug.as_deref())?;
     let root = cards_root(&app)?;
     run_blocking("expand Kanban worktrees", move || {
         expand_blocking(&root, request)
@@ -2433,6 +2452,132 @@ mod tests {
                 include_dirty_changes: include_dirty,
             }],
         }
+    }
+
+    #[test]
+    fn card_branch_names_preserve_words_and_validate_as_git_refs() {
+        let repo = init_repository("readable-branches");
+        for (title, expected) in [
+            (
+                "Add basic spell check to Orchestrator",
+                "codex/add-basic-spell-check-to-orchestrator",
+            ),
+            (
+                "Display steer prompts chronologically",
+                "codex/display-steer-prompts-chronologically",
+            ),
+            (
+                "Fix agent output table formatting",
+                "codex/fix-agent-output-table-formatting",
+            ),
+            (
+                " Fix: Agent / Output... Table! ",
+                "codex/fix-agent-output-table",
+            ),
+            ("日本語", "codex/card-test-id"),
+            ("---", "codex/card-test-id"),
+        ] {
+            let branch = card_branch_base("test-id", Some(title)).unwrap();
+            assert_eq!(branch, expected);
+            run(&repo, &["check-ref-format", "--branch", &branch]);
+        }
+        let long_word = "a".repeat(97);
+        assert_eq!(
+            card_branch_base("test-id", Some(&long_word)).unwrap(),
+            "codex/card-test-id"
+        );
+        let exact = "a".repeat(96);
+        assert_eq!(
+            card_branch_base("test-id", Some(&exact)).unwrap(),
+            format!("codex/{exact}")
+        );
+        let long_title = format!("{} formatting", "a".repeat(90));
+        assert_eq!(
+            card_branch_base("test-id", Some(&long_title)).unwrap(),
+            format!("codex/{}", "a".repeat(90))
+        );
+        remove_test_directory(&repo);
+    }
+
+    #[test]
+    fn unready_titles_fail_before_creating_artifacts() {
+        let repo = init_repository("unready-title");
+        let cards = temp_directory("unready-title-cards");
+        for title in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("Generating title..."),
+            Some("Generating title…"),
+            Some("generating-title"),
+        ] {
+            let mut request = target_request(&repo, "main", false);
+            request.card_slug = title.map(str::to_string);
+            assert!(provision_blocking(&cards, request)
+                .unwrap_err()
+                .contains("title is not ready"));
+            assert!(!cards.join("target-card").exists());
+            assert_eq!(run(&repo, &["branch", "--list", "codex/*"]), "");
+        }
+        remove_test_directory(&repo);
+        remove_test_directory(&cards);
+    }
+
+    #[test]
+    fn provisioning_and_expansion_share_readable_names_and_collision_suffixes() {
+        let repo = init_repository("long-title-source");
+        let docs = init_repository("long-title-docs");
+        let cards = temp_directory("long-title-cards");
+        let title = "Display steer prompts chronologically";
+        let expected = "codex/display-steer-prompts-chronologically";
+        let mut request = target_request(&repo, "main", false);
+        request.card_slug = Some(title.into());
+        let provisioned = provision_blocking(&cards, request).unwrap();
+        assert!(provisioned.complete);
+        assert_eq!(provisioned.repositories[0].card_branch, expected);
+        run(&docs, &["branch", expected]);
+        let expansion = KanbanGitExpandRequest {
+            card_id: "target-card".into(),
+            card_slug: Some(title.into()),
+            existing_bindings: provisioned.repositories.clone(),
+            repositories: vec![KanbanGitRepositorySelection {
+                repository_path: docs.to_string_lossy().to_string(),
+                relative_path: Some("docs".into()),
+                base_branch: None,
+                include_dirty_changes: false,
+            }],
+        };
+        let mut invalid = expansion.clone();
+        invalid.card_slug = Some("Generating title...".into());
+        assert!(expand_blocking(&cards, invalid)
+            .unwrap_err()
+            .contains("title is not ready"));
+        assert!(!cards.join("target-card/docs").exists());
+        let expanded = expand_blocking(&cards, expansion).unwrap();
+        assert!(expanded.complete);
+        assert_eq!(
+            expanded.repositories[0].card_branch,
+            format!("{expected}-2")
+        );
+        assert_eq!(
+            current_branch(Path::new(&provisioned.repositories[0].worktree_path)).unwrap(),
+            expected
+        );
+        for binding in provisioned
+            .repositories
+            .into_iter()
+            .chain(expanded.repositories)
+        {
+            cleanup_blocking(KanbanGitCleanupRequest {
+                binding,
+                delete_branch: true,
+                force: true,
+            })
+            .unwrap();
+        }
+        remove_test_directory(&repo);
+        remove_test_directory(&docs);
+        remove_test_directory(&cards);
     }
 
     #[test]

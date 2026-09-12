@@ -8,6 +8,7 @@ type ExpansionResult = {
 };
 
 export type ChatRepositoryExecutionDependencies = {
+  ensureTitle: () => Promise<string>;
   expand: (input: {
     cardId: string;
     cardSlug: string;
@@ -32,7 +33,6 @@ function errorMessage(error: unknown) {
 
 export async function reconcileChatRepositoriesForWorkspace(input: {
   chatId: number;
-  chatTitle: string;
   repositories: WorkspaceGitRepositoryStatus[];
   bindings: KanbanGitBinding[];
   dependencies: ChatRepositoryExecutionDependencies;
@@ -48,9 +48,10 @@ export async function reconcileChatRepositoriesForWorkspace(input: {
   );
   if (missing.length === 0) return input.bindings;
 
+  const title = await input.dependencies.ensureTitle();
   const expanded = await input.dependencies.expand({
     cardId: `chat-${input.chatId}`,
-    cardSlug: input.chatTitle,
+    cardSlug: title,
     existingBindings: input.bindings,
     repositories: missing.map((repository) => ({
       repositoryPath: repository.repository.rootPath,

@@ -204,6 +204,7 @@ function harness() {
         },
       },
     ]),
+    prepareCardTitle: vi.fn(async (value: KanbanCardRecord, _repositories: KanbanCardRecord["repositories"], _signal: AbortSignal) => value),
     loadChat: vi.fn(async () => chatRecord()),
     updateChat: vi.fn(async () => undefined),
     getNextTurnIndex: vi.fn(async () => 2),
@@ -243,6 +244,41 @@ function harness() {
 }
 
 describe("Kanban runtime controller", () => {
+  it("reserves a launch while awaiting its title and provisions with the reloaded card", async () => {
+    const { controller, dependencies, native } = harness();
+    const target = card({ title: "Generating title..." });
+    let settle!: (value: KanbanCardRecord) => void;
+    dependencies.prepareCardTitle.mockImplementation(() => new Promise((resolve) => { settle = resolve; }));
+    vi.mocked(native.claimAttempt).mockImplementation(async (input) => ({ card: card({ ...input.card, title: "Fix readable branch names", executionState: "starting" }), attempt: attempt() }));
+    const launch = controller.launchCard(target, "start", target.description);
+    expect(controller.isLaunchReserved(target.workspaceId, target.chatId)).toBe(true);
+    await vi.waitFor(() => expect(dependencies.prepareCardTitle).toHaveBeenCalledOnce());
+    expect(native.claimAttempt).not.toHaveBeenCalled();
+    expect(native.prepareRepositoryExecution).not.toHaveBeenCalled();
+    await expect(controller.launchCard(target, "start", target.description)).rejects.toThrow("active or starting");
+    settle({ ...target, title: "Fix readable branch names" });
+    await launch;
+    expect(native.prepareRepositoryExecution).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      card: expect.objectContaining({ title: "Fix readable branch names" }),
+    }));
+    expect(controller.isLaunchReserved(target.workspaceId, target.chatId)).toBe(false);
+  });
+
+  it("cancels a title wait without creating an attempt or worktree and releases the reservation", async () => {
+    const { controller, dependencies, native } = harness();
+    const target = card();
+    let settle!: (value: KanbanCardRecord) => void;
+    dependencies.prepareCardTitle.mockImplementation(() => new Promise((resolve) => { settle = resolve; }));
+    const launch = controller.launchCard(target, "start", target.description);
+    await vi.waitFor(() => expect(dependencies.prepareCardTitle).toHaveBeenCalledOnce());
+    await controller.stopCard(target);
+    await expect(launch).rejects.toThrow("cancelled");
+    settle(target);
+    expect(native.claimAttempt).not.toHaveBeenCalled();
+    expect(native.prepareRepositoryExecution).not.toHaveBeenCalled();
+    expect(controller.isLaunchReserved(target.workspaceId, target.chatId)).toBe(false);
+  });
+
   it("rejects launches before claiming an attempt while the target is being saved", async () => {
     const { controller, native, dependencies } = harness();
     const gate = vi.spyOn(boardPreferences, "assertKanbanTargetReady").mockImplementation(() => {

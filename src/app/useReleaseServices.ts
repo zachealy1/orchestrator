@@ -73,5 +73,5 @@ export function useReleaseServices(services: AppServices, notices: ApplicationNo
       id: "bug-report-feedback", revisionKey: String(Date.now()), tone: "warning", title: "Couldn’t open bug report", detail: error instanceof Error ? error.message : String(error), timeoutMs: 60_000,
     }));
   });
-  return { update: { state, act: () => { if (inputs.current.signedIn) void controller.act(); } }, reportBug };
+  return { update: { state, act: () => { if (inputs.current.signedIn) void controller.act(); }, dismissMessage: controller.dismissMessage }, reportBug };
 }

@@ -37,6 +37,7 @@ function repository(path: string): WorkspaceGitRepositoryStatus {
 
 function dependencies() {
   return {
+    ensureTitle: vi.fn().mockResolvedValue("Update app and docs"),
     expand: vi.fn(),
     save: vi.fn().mockResolvedValue(undefined),
     cleanup: vi.fn().mockResolvedValue({
@@ -47,6 +48,35 @@ function dependencies() {
 }
 
 describe("chat repository execution", () => {
+  it("awaits the persisted title before expanding and uses that title", async () => {
+    const native = dependencies();
+    let settle!: (title: string) => void;
+    native.ensureTitle.mockImplementation(() => new Promise((resolve) => { settle = resolve; }));
+    native.expand.mockResolvedValue({ complete: true, repositories: [], errors: [] });
+    const expansion = reconcileChatRepositoriesForWorkspace({
+      chatId: 7,
+      repositories: [repository("/workspace/app"), repository("/workspace/docs")],
+      bindings: [binding()],
+      dependencies: native,
+    });
+    expect(native.expand).not.toHaveBeenCalled();
+    settle("Fix readable branch names");
+    await expansion;
+    expect(native.expand).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ cardSlug: "Fix readable branch names" }));
+  });
+
+  it("does not expand if the title cannot be saved", async () => {
+    const native = dependencies();
+    native.ensureTitle.mockRejectedValue(new Error("Title persistence failed"));
+    await expect(reconcileChatRepositoriesForWorkspace({
+      chatId: 7,
+      repositories: [repository("/workspace/app"), repository("/workspace/docs")],
+      bindings: [binding()],
+      dependencies: native,
+    })).rejects.toThrow("Title persistence failed");
+    expect(native.expand).not.toHaveBeenCalled();
+  });
+
   it("adds newly discovered repositories without replacing existing worktrees", async () => {
     const existing = binding();
     const added = binding({
@@ -65,7 +95,6 @@ describe("chat repository execution", () => {
     await expect(
       reconcileChatRepositoriesForWorkspace({
         chatId: 7,
-        chatTitle: "Update app and docs",
         repositories: [repository("/workspace/app"), repository("/workspace/docs")],
         bindings: [existing],
         dependencies: native,
@@ -92,7 +121,6 @@ describe("chat repository execution", () => {
     await expect(
       reconcileChatRepositoriesForWorkspace({
         chatId: 7,
-        chatTitle: "Update app",
         repositories: [repository("/workspace/app")],
         bindings: [existing],
         dependencies: native,
@@ -119,7 +147,6 @@ describe("chat repository execution", () => {
     await expect(
       reconcileChatRepositoriesForWorkspace({
         chatId: 7,
-        chatTitle: "Update app and docs",
         repositories: [repository("/workspace/app"), repository("/workspace/docs")],
         bindings: [existing],
         dependencies: native,
