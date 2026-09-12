@@ -772,6 +772,8 @@ describe("Application runtime scenarios 2", () => {
           name: /scroll-safe history chat/i,
         }),
       );
+      // JSDOM does not run the CSS animation; finish it before testing momentum.
+      fireEvent.transitionEnd(drawer, { propertyName: "transform" });
       expect(await screen.findByText("The transcript is ready.")).toBeInTheDocument();
 
       const transcript = screen.getByLabelText("Task chat transcript");
