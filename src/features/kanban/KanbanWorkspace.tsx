@@ -382,7 +382,7 @@ function KanbanGitDialog({
               type="text"
               value={dialog.message}
               autoComplete="off"
-              spellCheck={false}
+              spellCheck={true}
               disabled={busy}
               onChange={(event) => onMessageChange(event.currentTarget.value)}
             />

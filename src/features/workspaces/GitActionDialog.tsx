@@ -104,6 +104,7 @@ export function GitActionDialog({ model, actions }: GitActionDialogProps) {
         <label className="git-action-message">
           <textarea
             aria-label="Commit message"
+            spellCheck={true}
             placeholder="Commit message (leave blank to generate)..."
             value={model.commitMessage}
             onChange={(event) =>

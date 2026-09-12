@@ -111,6 +111,7 @@ export function KanbanToolbar({
           value={search}
           disabled={disabled}
           placeholder="Search cards"
+          spellCheck={false}
           onChange={(event: ChangeEvent<HTMLInputElement>) =>
             onSearchChange(event.target.value)
           }
