@@ -2,7 +2,16 @@
 
 The README uses genuine Orchestrator screens and a fictional local project, **Taskboard Demo**. Screenshots are documentation, not UI mockups or performance benchmarks.
 
-## Capture target
+## Beta.2 refresh — 12 September 2026
+
+- Candidate: `3f0704303ddc2ef8be010d477ddc998176a7ed26` (`0.2.0-beta.2`). The capture build uses the candidate application code unchanged, with a temporary Tauri configuration overriding only the isolated application identifier and initial window dimensions. Release preparation changes publication scripts and documentation only.
+- Chat was recaptured from the original isolated Taskboard Demo database and local repository. No personal database was copied. The follow-up asked for a three-row Markdown table based only on the existing overview, with no file inspection, modifications, tests or delegation. The response and its reported **7s / 0 tokens** are retained as displayed; the token figure is not corrected or inferred. The older verification text above it belongs to the original 8 September conversation.
+- Chat export: 1350 × 768 native capture pixels, no resizing or upscaling. The complete account footer at `(0, 712)`–`(278, 768)` was replaced with the existing opaque sidebar background. Every pixel outside that rectangle is unchanged. Metadata was removed without changing decoded pixels; visual inspection and OCR found no remaining account identity or private paths.
+- Kanban refresh is pending the local capture session being unlocked. Its current image retains the 8 September provenance below.
+- The four supporting screenshots retain their original pixels and capture dates. Candidate comparison found no relevant visible change in the scenes: file preview and local diff layouts are unchanged; the subagent image has prose and no table; Analytics has no changed release UI. These historical captures are not relabelled as beta.2 recaptures.
+- README preview uses GitHub-rendered Markdown. Desktop (1280-pixel) and narrow (390-pixel) layouts have no horizontal overflow; all six images load with descriptive alt text and links to the matching full-size PNG. The refreshed Chat image opens at 1350 × 768.
+
+## Original capture target — 8 September 2026
 
 - Captured: 8 September 2026.
 - Source: `0e821e89562d49837a6789daa461d9e0f8511435` (`0.2.0-beta.1`) plus a separate local standalone Code Mode host packaging fix used for the capture build. No screenshot-specific application code or demo mode is used.
@@ -21,27 +30,27 @@ Use the capture app's normal controls. Run only a few bounded tasks; do not seed
 
 | Image | Preparation |
 |---|---|
-| `chat.png` | Ask the agent to explain Taskboard Demo in three concise bullets and suggest one improvement, without modifying files. Show its response and the composer. |
+| `chat.png` | Reopen the original overview conversation, then ask for a three-row table covering `createTask`, `toggleTask` and the suggested test improvement, using only the existing context. Request no tools, tests, writes or delegation. Show the genuine table, submitted prompt and composer. |
 | `file-contents.png` | With the demo conversation open, expand the workspace in the sidebar and select `package.json`. Show the file tree and the syntax-highlighted contents in the preview drawer. |
 | `kanban.png` | Create clearly named backlog cards and run the completed-task filtering card below. Capture their actual states; do not alter records to make the board look busier. |
 | `subagents.png` | Ask the agent to delegate a read-only review of task validation and test coverage to one subagent, then wait for its reply. Open that subagent's inspector with its original instruction and response visible. The supporting image focuses on the conversation and inspector, excluding window chrome and the navigation sidebar. |
 | `change-review.png` | Run a card requesting `filterTasks(tasks, status)` for `all`, `active`, and `completed`, with immutable inputs and focused tests. Open the genuine resulting local diff. Do not commit, push, or publish from the card. |
 | `analytics.png` | Select only Taskboard Demo in Analytics. Capture local metrics and charts after the demo tasks finish. Crop out the personal account selector and account-level balances or quotas. |
 
-The demo contains two real backlog cards and one filtering card awaiting local review. Its six tests passed. Analytics reflects all four recorded demo runs, including an earlier runtime-diagnostic response recorded as completed by the application; it is not an assertion that every task achieved its objective. Timings include manual approval waits. A single-day chart has limited data, so no historical points have been invented to fill it.
+The demo contains two real backlog cards and one filtering card awaiting local review. Its six tests passed in the original session. The retained 8 September Analytics screenshot reflects the four demo runs recorded at that time, including an earlier runtime-diagnostic response recorded as completed by the application; it is not an assertion that every task achieved its objective. Timings include manual approval waits. A single-day chart has limited data, so no historical points have been invented to fill it. The 12 September table response is an additional genuine run and is not retroactively added to the earlier Analytics screenshot.
 
 ## Export record
 
 | File | Pixels | Bytes |
 |---|---:|---:|
-| `chat.png` | 3024 × 1892 | 321,562 |
+| `chat.png` | 1350 × 768 | 386,617 |
 | `file-contents.png` | 3024 × 1892 | 281,145 |
 | `kanban.png` | 3024 × 1892 | 318,029 |
 | `subagents.png` | 1067 × 721 | 458,932 |
 | `change-review.png` | 3024 × 1892 | 370,787 |
 | `analytics.png` | 2344 × 1462 | 207,681 |
 
-Combined size: **1,958,136 bytes**. Final exports were visually inspected, checked with OCR, and verified to contain only PNG image-data chunks (`IHDR`, `IDAT`, `IEND`), without embedded text, source paths or other metadata. All six images were checked for remaining account identities; the four full-screen images have uniformly blank account-footer areas, and the Analytics and subagent crops contain no identity footer.
+Combined size: **2,023,191 bytes**. The refreshed Chat export passed visual, OCR and PNG metadata inspection. Retained images preserve their previously reviewed pixel data and privacy treatment. Only `IHDR`, `IDAT` and `IEND` chunks are permitted in final exports.
 
 ## Privacy and export checklist
 

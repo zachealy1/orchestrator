@@ -23,7 +23,7 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Experimental community beta.** Version **0.2.0-beta.2** supports **Apple Silicon and Intel** with signed in-app updates. It is **not notarized by Apple** and **not behaviorally tested**.
+> **Experimental community beta.** Version **0.2.0-beta.2** supports **Apple Silicon and Intel** with signed in-app updates. It is **ad-hoc signed and not notarized by Apple**. The maintainer reports manual testing; see the [release acceptance record](docs/release-acceptance.md) for scope.
 
 Orchestrator is an independent project, not an OpenAI product. Browser, Computer Use and plugin integrations are experimental and may require separately installed upstream components.
 
@@ -46,7 +46,7 @@ macOS may block the first launch because this beta is not notarized. Read the [f
 
 Start with a prompt, keep the conversation alongside your workspace, and follow the agent's work as it happens.
 
-[![A real Taskboard Demo conversation in Orchestrator, with the agent's response and prompt composer visible.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
+[![Taskboard Demo conversation showing the updated transcript, a readable Markdown table and the prompt composer.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
 
 *Real tasks in a fictional local project. Account identity details are removed for privacy; task results and activity are genuine. Click any screenshot to view it at full size.*
 
@@ -60,7 +60,7 @@ Expand a workspace in the sidebar and select a file to read its contents beside 
 
 ### Organise work with Kanban
 
-Turn ideas into cards and follow each task from preparation through execution and review. Chat and Kanban share the same workspace, so you can choose the view that fits the work.
+Turn ideas into cards and follow each task from preparation through execution and review. Select the target branch in the board toolbar for new card branches and pull requests. Chat and Kanban share the same workspace, so you can choose the view that fits the work.
 
 [![Taskboard Demo's Kanban board, showing named tasks at different stages of work.](docs/assets/screenshots/kanban.png)](docs/assets/screenshots/kanban.png)
 
@@ -129,7 +129,7 @@ The **0.2.0-beta.2 community release targets Apple Silicon and Intel**. Use the 
 
 To update manually, back up important data, finish all tasks and repository operations, quit Orchestrator, then replace the Applications copy with the newer installer from [Releases](https://github.com/zachealy1/orchestrator/releases). See the [installation guide](docs/public/INSTALLATION.md) and [recovery guidance](docs/public/RECOVERY.md).
 
-The community release workflow publishes independently signed updater packages and advances the feed only after both architectures finish. No Apple account or paid update service is required. Packages receive integrity checks; this release is not behaviorally tested. See the [release record](docs/release-acceptance.md).
+The community release workflow publishes independently signed updater packages and advances the feed only after both architectures finish. No Apple account or paid update service is required. The maintainer reports manual testing of the changes. Packaging verifies integrity without a separate installer or update rehearsal. See the [release record](docs/release-acceptance.md).
 
 ## Documentation and support
 
