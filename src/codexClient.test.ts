@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   codexDefaultProfileRpc,
+  consumeCodexRateLimitResetCredit,
   connectDefaultCodexProfile,
   listDefaultCodexSkills,
   loadPersistedRunActivity,
@@ -200,5 +201,25 @@ describe("Codex account login client", () => {
         { label: "Repository", value: "openai/orchestrator" },
       ],
     });
+  });
+});
+
+describe("Codex earned reset client", () => {
+  beforeEach(() => invokeMock.mockReset());
+  it.each([["default", 0, "codex_default_profile_rpc"], ["account:8", 8, "codex_rpc"]] as const)("redeems through %s with only an idempotency key", async (profileKey, accountId, command) => {
+    invokeMock.mockResolvedValue({ outcome: "reset" });
+    await expect(consumeCodexRateLimitResetCredit(profileKey, accountId, "logical-attempt")).resolves.toEqual({ outcome: "reset" });
+    expect(invokeMock).toHaveBeenCalledExactlyOnceWith(command, {
+      ...(accountId === 0 ? {} : { accountId }),
+      method: "account/rateLimitResetCredit/consume", params: { idempotencyKey: "logical-attempt" },
+    });
+  });
+  it("rejects unknown responses so an uncertain redemption can be retried", async () => {
+    invokeMock.mockResolvedValue({ outcome: "unexpected" });
+    await expect(consumeCodexRateLimitResetCredit("account:8", 8, "same-key")).rejects.toThrow("invalid usage-reset response");
+  });
+  it("does not send an empty request ID", async () => {
+    await expect(consumeCodexRateLimitResetCredit("default", 0, " ")).rejects.toThrow("request ID is required");
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

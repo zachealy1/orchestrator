@@ -5,6 +5,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
+import { useId } from "react";
 import { formatCodexPlanType } from "../lib/codexAuth";
 import type {
   AnalyticsUsageAccount,
@@ -15,6 +16,7 @@ import { isManagedCodexPlan } from "../features/analytics/usageLimits";
 import { ComposerSelect } from "./ComposerSelect";
 
 type Props = {
+  title?: string;
   accounts: AnalyticsUsageAccount[];
   selectedAccountId: number | null;
   state: CodexUsageLimitsAccountState;
@@ -28,7 +30,9 @@ export function AnalyticsUsageLimits({
   state,
   onAccountChange,
   onRetry,
+  title = "Usage limits",
 }: Props) {
+  const titleId = useId();
   const selectedAccount =
     accounts.find((account) => account.accountId === selectedAccountId) ?? null;
   const snapshot = state.snapshot;
@@ -44,7 +48,7 @@ export function AnalyticsUsageLimits({
   return (
     <article
       className="analytics-card analytics-usage-card"
-      aria-labelledby="analytics-usage-title"
+      aria-labelledby={titleId}
       aria-busy={state.status === "loading" || state.refreshing}
     >
       <div className="analytics-usage-header">
@@ -54,7 +58,7 @@ export function AnalyticsUsageLimits({
           </span>
           <div>
             <div className="analytics-usage-title-line">
-              <h2 id="analytics-usage-title">Usage limits</h2>
+              <h2 id={titleId}>{title}</h2>
               {planType ? (
                 <span className="analytics-usage-plan-badge">
                   {formatCodexPlanType(planType)}

@@ -4,6 +4,7 @@ import {
   mergeCodexRateLimitUpdate,
   normalizeCodexUsageLimits,
   readCodexAccountRateLimitsResponse,
+  readCodexRateLimitResetCredits,
   type CodexAccountRateLimitsResponse,
   type CodexRateLimitSnapshot,
 } from "./usageLimits";
@@ -157,5 +158,20 @@ describe("Codex usage-limit normalization", () => {
     expect(classifyUsageLimitPeriod(10_080)).toBe("weekly");
     expect(classifyUsageLimitPeriod(43_200)).toBe("monthly");
     expect(classifyUsageLimitPeriod(90)).toBe("generic");
+  });
+});
+
+describe("earned reset credit availability", () => {
+  it.each([null, undefined, {}, { availableCount: -1 }, { availableCount: 1.5 }, { availableCount: "2" }, { availableCount: Infinity }])("treats absent or invalid availability as unknown: %j", (value) => {
+    expect(readCodexRateLimitResetCredits(value)).toBeNull();
+  });
+  it.each([null, [], [{ id: "one" }]])("uses the authoritative count regardless of detail rows: %j", (credits) => {
+    expect(readCodexRateLimitResetCredits({ availableCount: 3, credits })).toEqual({ availableCount: 3 });
+  });
+  it("preserves zero and integrates availability with rate-limit parsing and notifications", () => {
+    expect(readCodexRateLimitResetCredits({ availableCount: 0 })).toEqual({ availableCount: 0 });
+    const response = readCodexAccountRateLimitsResponse({ rateLimits: snapshot(), rateLimitResetCredits: { availableCount: 2, credits: null } });
+    expect(response?.rateLimitResetCredits?.availableCount).toBe(2);
+    expect(mergeCodexRateLimitUpdate(response, snapshot()).rateLimitResetCredits?.availableCount).toBe(2);
   });
 });

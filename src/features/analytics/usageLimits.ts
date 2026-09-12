@@ -41,10 +41,23 @@ export type CodexRateLimitSnapshot = {
   rateLimitReachedType: CodexRateLimitReachedType | null;
 };
 
+export type CodexRateLimitResetCredits = {
+  // Detail rows may be omitted or capped; this count is authoritative.
+  availableCount: number;
+};
+
+export type CodexUsageResetOutcome =
+  | "reset"
+  | "alreadyRedeemed"
+  | "nothingToReset"
+  | "noCredit";
+
+export type CodexUsageResetResponse = { outcome: CodexUsageResetOutcome };
+
 export type CodexAccountRateLimitsResponse = {
   rateLimits: CodexRateLimitSnapshot;
   rateLimitsByLimitId: Record<string, CodexRateLimitSnapshot> | null;
-  rateLimitResetCredits: unknown | null;
+  rateLimitResetCredits: CodexRateLimitResetCredits | null;
 };
 
 export type CodexUsageLimitPeriod =
@@ -190,7 +203,7 @@ export function readCodexAccountRateLimitsResponse(
   return {
     rateLimits,
     rateLimitsByLimitId,
-    rateLimitResetCredits: object.rateLimitResetCredits ?? null,
+    rateLimitResetCredits: readCodexRateLimitResetCredits(object.rateLimitResetCredits),
   };
 }
 
@@ -539,4 +552,13 @@ function readRateLimitReachedType(value: unknown) {
 
 function readFiniteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function readCodexRateLimitResetCredits(
+  value: unknown,
+): CodexRateLimitResetCredits | null {
+  const count = readObject(value).availableCount;
+  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    ? { availableCount: count }
+    : null;
 }
