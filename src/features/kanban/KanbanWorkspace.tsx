@@ -66,7 +66,6 @@ import {
   reopenKanbanCard,
   saveKanbanGitBindings,
   saveKanbanInheritedContext,
-  saveKanbanPreferences,
   updateKanbanCard,
   useKanbanLocalReview,
   completeKanbanLocalReviewWithoutChanges,
@@ -124,6 +123,13 @@ import {
   FLOATING_STATUS_NOTICE_TIMEOUT_MS,
   type FloatingStatusNotice,
 } from "../../components/FloatingHeaderStatusBubble";
+import { KanbanTargetBranchSelect } from "./components/KanbanTargetBranchSelect";
+import {
+  assertKanbanTargetReady,
+  parseKanbanTargetBranch,
+  persistKanbanBoardPreferences,
+  type KanbanTargetBranch,
+} from "./boardPreferences";
 import "./kanban.css";
 
 export type KanbanLaunchKind = KanbanAttemptRecord["kind"];
@@ -153,6 +159,7 @@ type Props = {
   onShowGithubLogin: () => void;
   onStatusNotice?: (notice: FloatingStatusNotice) => void;
   toolbarHost?: HTMLElement | null;
+  branchSelectorHost?: HTMLElement | null;
   resolvedTheme: ResolvedTheme;
 };
 
@@ -161,6 +168,7 @@ export type KanbanWorkspaceHandle = {
 };
 
 type StoredPreferences = {
+  targetBranch?: KanbanTargetBranch;
   search: string;
   filters: KanbanFilterSelection;
   groupBy: KanbanGroupBy;
@@ -374,7 +382,7 @@ function KanbanGitDialog({
               type="text"
               value={dialog.message}
               autoComplete="off"
-              spellCheck={false}
+              spellCheck={true}
               disabled={busy}
               onChange={(event) => onMessageChange(event.currentTarget.value)}
             />
@@ -510,6 +518,7 @@ function parsePreferences(value: string): StoredPreferences {
         )
       : [];
     return {
+      targetBranch: parseKanbanTargetBranch(parsed.targetBranch),
       search: typeof parsed.search === "string" ? parsed.search : "",
       filters:
         parsed.filters && typeof parsed.filters === "object"
@@ -714,6 +723,7 @@ function KanbanWorkspace({
   onShowGithubLogin,
   onStatusNotice,
   toolbarHost,
+  branchSelectorHost,
   resolvedTheme,
 }: Props, ref) {
   const initialCacheRef = useRef(readKanbanWorkspaceCache(workspace.id));
@@ -746,6 +756,7 @@ function KanbanWorkspace({
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [bindingHydrationVersion, setBindingHydrationVersion] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [targetSaving, setTargetSaving] = useState(false);
   const [errorStatus, setErrorStatus] = useState<KanbanStatusMessage | null>(
     null,
   );
@@ -879,6 +890,10 @@ function KanbanWorkspace({
       });
       const next = bootstrap.snapshot;
       if (request !== requestSequence.current) return next;
+      if (
+        snapshotRef.current?.workspaceId === next.workspaceId &&
+        snapshotRef.current.revision > next.revision
+      ) return next;
       const nextPreferences = preferenceSavePending.current
         ? preferencesRef.current
         : parsePreferences(next.preferencesJson);
@@ -1047,6 +1062,7 @@ function KanbanWorkspace({
     boardReloadNeedsArchivedRef.current = false;
     pullRequestSyncInFlightRef.current = null;
     setPullRequestSyncing(false);
+    setTargetSaving(false);
     const cached = readKanbanWorkspaceCache(workspace.id);
     snapshotRef.current = cached?.snapshot ?? null;
     setSnapshot(cached?.snapshot ?? null);
@@ -1195,23 +1211,12 @@ function KanbanWorkspace({
         const pendingSnapshot = snapshotRef.current;
         const pendingPreferences = preferencesRef.current;
         if (pendingSnapshot) {
-          void saveKanbanPreferences({
+          void persistKanbanBoardPreferences({
             workspaceId: workspace.id,
             expectedRevision: pendingSnapshot.revision,
             preferences: pendingPreferences,
             columnOrder: pendingPreferences.columnOrder,
           })
-            .catch(async () => {
-              const latest = await loadKanbanBoard(workspace.id, {
-                includeArchived: true,
-              });
-              await saveKanbanPreferences({
-                workspaceId: workspace.id,
-                expectedRevision: latest.revision,
-                preferences: pendingPreferences,
-                columnOrder: pendingPreferences.columnOrder,
-              });
-            })
             .catch((saveError) => {
               console.error(
                 "Board preferences could not be flushed while leaving the workspace",
@@ -1507,6 +1512,43 @@ function KanbanWorkspace({
     ];
   }, [accountLabels, domainCards, modelLabels, multiRepositoryWorkspace, reasoningLabels, repositories]);
 
+  async function saveTargetBranch(target: KanbanTargetBranch, initialize = false) {
+    if (targetSaving || !snapshotRef.current) return;
+    if (preferenceTimer.current !== null) {
+      window.clearTimeout(preferenceTimer.current);
+      preferenceTimer.current = null;
+    }
+    assertKanbanTargetReady(workspace.id);
+    setError(null);
+    setTargetSaving(true);
+    preferenceSavePending.current = true;
+    try {
+      const saved = await persistKanbanBoardPreferences({
+        workspaceId: workspace.id,
+        expectedRevision: snapshotRef.current.revision,
+        preferences: preferencesRef.current,
+        columnOrder: preferencesRef.current.columnOrder,
+      }, target, initialize);
+      if (workspaceIdRef.current !== workspace.id) return;
+      const next = parsePreferences(saved.preferencesJson);
+      preferencesRef.current = next;
+      setPreferences(next);
+      snapshotRef.current = saved;
+      setSnapshot(saved);
+      writeKanbanWorkspaceCache(workspace.id, {
+        snapshot: saved,
+        bindingsByCard: bindingsByCardRef.current,
+        includesArchived: true,
+        scrollTop: readKanbanWorkspaceCache(workspace.id)?.scrollTop ?? 0,
+      });
+    } finally {
+      if (workspaceIdRef.current === workspace.id) {
+        preferenceSavePending.current = false;
+        setTargetSaving(false);
+      }
+    }
+  }
+
   function schedulePreferenceSave(next: StoredPreferences) {
     preferenceSavePending.current = true;
     preferencesRef.current = next;
@@ -1530,28 +1572,16 @@ function KanbanWorkspace({
     preferenceTimer.current = window.setTimeout(async () => {
       preferenceTimer.current = null;
       const value = preferencesRef.current;
-      let currentSnapshot = snapshotRef.current;
+      const currentSnapshot = snapshotRef.current;
       if (!currentSnapshot) return;
       try {
-        let saved: KanbanBoardSnapshotRecord;
-        try {
-          saved = await saveKanbanPreferences({
-            workspaceId: workspace.id,
-            expectedRevision: currentSnapshot.revision,
-            preferences: value,
-            columnOrder: value.columnOrder,
-          });
-        } catch {
-          currentSnapshot = await loadKanbanBoard(workspace.id, {
-            includeArchived: true,
-          });
-          saved = await saveKanbanPreferences({
-            workspaceId: workspace.id,
-            expectedRevision: currentSnapshot.revision,
-            preferences: value,
-            columnOrder: value.columnOrder,
-          });
-        }
+        const saved = await persistKanbanBoardPreferences({
+          workspaceId: workspace.id,
+          expectedRevision: currentSnapshot.revision,
+          preferences: value,
+          columnOrder: value.columnOrder,
+        });
+        if (workspaceIdRef.current !== workspace.id) return;
         snapshotRef.current = saved;
         setSnapshot(saved);
         if (preferencesRef.current === value) {
@@ -1738,7 +1768,10 @@ function KanbanWorkspace({
     kind: KanbanLaunchKind,
     prompt = card.description,
   ) {
-    await runAction(() => onLaunch(card, kind, prompt), "Agent turn started.");
+    await runAction(() => {
+      assertKanbanTargetReady(workspace.id);
+      return onLaunch(card, kind, prompt);
+    }, "Agent turn started.");
   }
 
   async function handleMove(request: KanbanMoveRequest) {
@@ -2170,6 +2203,19 @@ function KanbanWorkspace({
     );
   }
 
+  const branchSelector = repositories.length === 1 ? (
+    <KanbanTargetBranchSelect
+      key={`${workspace.id}:${repositories[0].repository.rootPath}`}
+      active={active}
+      workspacePath={workspace.path}
+      repositoryPath={repositories[0].repository.rootPath}
+      target={preferences.targetBranch}
+      disabled={busy || targetSaving}
+      onSave={saveTargetBranch}
+      onError={setError}
+    />
+  ) : null;
+
   const toolbar = (
     <KanbanToolbar
       search={effectivePreferences.search}
@@ -2183,7 +2229,7 @@ function KanbanWorkspace({
       ).length}
       archivedOpen={archivedOpen}
       refreshing={pullRequestSyncing}
-      disabled={busy}
+      disabled={busy || targetSaving}
       onSearchChange={(search) =>
         schedulePreferenceSave({ ...preferencesRef.current, search })
       }
@@ -2215,6 +2261,11 @@ function KanbanWorkspace({
       aria-busy={busy}
       data-active={active ? "true" : "false"}
     >
+      {branchSelectorHost
+        ? createPortal(branchSelector, branchSelectorHost)
+        : branchSelector ? (
+            <div className="kanban-target-branch-fallback">{branchSelector}</div>
+          ) : null}
       {githubConnection && !githubConnection.connected ? (
         <div
           className="kanban-workspace-alert github-warning"
@@ -2275,7 +2326,7 @@ function KanbanWorkspace({
       ) : archivedOpen ? (
         <KanbanArchivedView
           cards={archivedCards}
-          disabled={busy}
+          disabled={busy || targetSaving}
           showRepositoryMetadata={!multiRepositoryWorkspace}
           onRestoreCard={(card) => {
             const persisted = cardsById.get(card.id);
@@ -2296,7 +2347,7 @@ function KanbanWorkspace({
               ) : null}
               <KanbanBoard
                 columns={buildColumns(group.cards)}
-                disabled={busy}
+                disabled={busy || targetSaving}
                 showRepositoryMetadata={!multiRepositoryWorkspace}
                 onMoveCard={(request) => void handleMove(request)}
                 onCardAction={(action, card) => void handleCardAction(action, card)}
@@ -2318,7 +2369,7 @@ function KanbanWorkspace({
           <p>Try changing or clearing the current filters.</p>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || targetSaving}
             onClick={clearBoardConstraints}
           >
             <FilterX size={15} aria-hidden="true" />
@@ -2328,7 +2379,7 @@ function KanbanWorkspace({
       ) : (
         <KanbanBoard
           columns={buildColumns([])}
-          disabled={busy}
+          disabled={busy || targetSaving}
           showRepositoryMetadata={!multiRepositoryWorkspace}
           onMoveCard={(request) => void handleMove(request)}
           onCardAction={(action, card) => void handleCardAction(action, card)}

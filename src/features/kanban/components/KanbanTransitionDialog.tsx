@@ -310,6 +310,7 @@ export function KanbanTransitionDialog({
             <span>{messageLabel}</span>
             <textarea
               rows={5}
+              spellCheck={true}
               value={messageValue}
               placeholder={messagePlaceholder}
               disabled={busy}

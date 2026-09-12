@@ -479,6 +479,7 @@ export const SubagentInspector = memo(function SubagentInspector({
           <span className="sr-only">Send instruction to subagent</span>
           <textarea
             rows={2}
+            spellCheck={true}
             value={instruction}
             placeholder={
               canSteer

@@ -986,7 +986,7 @@ export const TaskComposer = memo(function TaskComposer({ model, actions }: Props
               data-gramm_editor="false"
               placeholder="Do that thing!"
               rows={1}
-              spellCheck={false}
+              spellCheck={true}
             />
           </label>
 
