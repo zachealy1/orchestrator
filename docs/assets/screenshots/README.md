@@ -6,10 +6,10 @@ The README uses genuine Orchestrator screens and a fictional local project, **Ta
 
 - Candidate: `3f0704303ddc2ef8be010d477ddc998176a7ed26` (`0.2.0-beta.2`). The capture build uses the candidate application code unchanged, with a temporary Tauri configuration overriding only the isolated application identifier and initial window dimensions. Release preparation changes publication scripts and documentation only.
 - Chat was recaptured from the original isolated Taskboard Demo database and local repository. No personal database was copied. The follow-up asked for a three-row Markdown table based only on the existing overview, with no file inspection, modifications, tests or delegation. The response and its reported **7s / 0 tokens** are retained as displayed; the token figure is not corrected or inferred. The older verification text above it belongs to the original 8 September conversation.
-- Chat and Kanban exports: 1350 × 768 native capture pixels each, with consistent dark-theme window framing and no resizing or upscaling. The complete account footer at `(0, 712)`–`(278, 768)` was replaced with the existing opaque sidebar background. Every pixel outside that rectangle is unchanged. Metadata was removed without changing decoded pixels; visual inspection and OCR found no remaining account identity or private paths.
+- Chat and Kanban exports: both recaptured in macOS full-screen mode at the maintainer's request, with square edges and no window corners or title-bar buttons. The capture tool returned 1224 × 768 pixels each; the PNG exports retain those dimensions without further resizing or upscaling. The complete account footer at `(0, 714)`–`(251, 768)` was replaced with the existing opaque sidebar background. Every pixel outside that rectangle is unchanged. Metadata was removed without changing decoded pixels; visual inspection and OCR found no remaining account identity or private paths.
 - Kanban was recaptured from the same candidate and existing demo board. The target-branch selector shows `codex/readme-demo` immediately before refresh and archive. The two backlog cards and filtering card awaiting local review are unchanged; no cards were rerun, moved, committed or published for this capture.
 - The four supporting screenshots retain their original pixels and capture dates. Candidate comparison found no relevant visible change in the scenes: file preview and local diff layouts are unchanged; the subagent image has prose and no table; Analytics has no changed release UI. These historical captures are not relabelled as beta.2 recaptures.
-- README preview uses GitHub-rendered Markdown. Desktop (1280-pixel) and narrow (390-pixel) layouts have no horizontal overflow; all six images load with descriptive alt text and links to the matching full-size PNG. Both refreshed images open at 1350 × 768.
+- README preview uses GitHub-rendered Markdown. Desktop (1280-pixel) and narrow (390-pixel) layouts have no horizontal overflow; all six images load with descriptive alt text and links to the matching full-size PNG. Both refreshed images open at 1224 × 768.
 
 ## Original capture target — 8 September 2026
 
@@ -43,14 +43,14 @@ The demo contains two real backlog cards and one filtering card awaiting local r
 
 | File | Pixels | Bytes |
 |---|---:|---:|
-| `chat.png` | 1350 × 768 | 386,617 |
+| `chat.png` | 1224 × 768 | 379,737 |
 | `file-contents.png` | 3024 × 1892 | 281,145 |
-| `kanban.png` | 1350 × 768 | 297,887 |
+| `kanban.png` | 1224 × 768 | 258,113 |
 | `subagents.png` | 1067 × 721 | 458,932 |
 | `change-review.png` | 3024 × 1892 | 370,787 |
 | `analytics.png` | 2344 × 1462 | 207,681 |
 
-Combined size: **2,003,049 bytes**. Both refreshed exports passed visual, OCR and PNG metadata inspection. Retained images preserve their previously reviewed pixel data and privacy treatment. All six final PNGs contain only `IHDR`, `IDAT` and `IEND` chunks.
+Combined size: **1,956,395 bytes**. Both refreshed exports passed visual, OCR and PNG metadata inspection. Retained images preserve their previously reviewed pixel data and privacy treatment. All six final PNGs contain only `IHDR`, `IDAT` and `IEND` chunks.
 
 ## Privacy and export checklist
 

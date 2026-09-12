@@ -48,7 +48,7 @@ Start with a prompt, keep the conversation alongside your workspace, and follow 
 
 [![Taskboard Demo conversation showing the updated transcript, a readable Markdown table and the prompt composer.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
 
-*Chat and Kanban were captured from the beta.2 candidate using the fictional Taskboard Demo. Account identities are removed; task results and activity remain genuine. Click any screenshot to view it at full size.*
+*Chat and Kanban were captured in full screen from the beta.2 candidate using the fictional Taskboard Demo. Account identities are removed; task results and activity remain genuine. Click any screenshot to view it at full size.*
 
 ## Feature tour
 
