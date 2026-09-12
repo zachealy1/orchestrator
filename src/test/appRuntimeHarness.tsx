@@ -1,3 +1,5 @@
+import { workspaceChatFixture } from "./chatFixtures";
+export { workspaceChatFixture } from "./chatFixtures";
 import { prepareAttachmentMocks } from "./attachmentMocks";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -129,6 +131,7 @@ const mocks = vi.hoisted(() => ({
   recoverInterruptedPromptQueueItemsMock: vi.fn(),
   advanceChatConversationRevisionMock: vi.fn(),
   listWorkspaceChatsMock: vi.fn(),
+  listPriorityChatsMock: vi.fn(),
   getChatWithRunsMock: vi.fn(),
   listChatSubagentsMock: vi.fn(),
   listRunSubagentInstructionsMock: vi.fn(),
@@ -537,6 +540,8 @@ vi.mock("../data/repositories", () => ({
       listRunSubagentInstructions: mocks.listRunSubagentInstructionsMock,
       listLocalChatTranscript: mocks.listLocalChatTranscriptMock,
       listWorkspaceChats: mocks.listWorkspaceChatsMock,
+      listSidebarWorkspaceChats: async (id: number, limit: number, offset: number) => (await mocks.listWorkspaceChatsMock(id)).slice(offset, offset + limit),
+      listPriorityChats: mocks.listPriorityChatsMock,
       readExternalTranscriptSnapshot: mocks.readExternalTranscriptSnapshotMock,
       softDeleteChat: mocks.softDeleteChatMock,
       upsertRunSubagent: mocks.upsertRunSubagentMock,
@@ -670,53 +675,6 @@ export function workspaceRunFixture(
     execution_settings_json: null,
     web_preview_json: null,
     ...overrides,
-  };
-}
-
-export function workspaceChatFixture(
-  overrides: Partial<{
-    id: number;
-    title: string;
-    codex_thread_id: string | null;
-    origin: "orchestrator" | "codex_external";
-    profile_key: `account:${number}` | "default" | null;
-    external_thread_id: string | null;
-    source_kind: string | null;
-    status: string;
-    turn_count: number;
-    total_tokens: number | null;
-    duration_ms: number | null;
-    latest_activity_at: string;
-    conversation_revision: number;
-  }> = {},
-) {
-  return {
-    id: overrides.id ?? 401,
-    workspace_id: workspace.id,
-    account_id: 7,
-    account_label: "dev@example.com",
-    account_email: "dev@example.com",
-    title: overrides.title ?? "Fix the app",
-    codex_thread_id: overrides.codex_thread_id ?? "thread-1",
-    origin: overrides.origin ?? "orchestrator",
-    profile_key: overrides.profile_key ?? "account:7",
-    external_thread_id: overrides.external_thread_id ?? null,
-    source_kind: overrides.source_kind ?? null,
-    sync_status: "synced",
-    external_cwd: null,
-    external_created_at: null,
-    external_updated_at: null,
-    last_synced_at: null,
-    status: overrides.status ?? "completed",
-    created_at: "2026-06-30T09:00:00Z",
-    updated_at: "2026-06-30T09:01:00Z",
-    deleted_at: null,
-    latest_activity_at: overrides.latest_activity_at ?? "2026-06-30T09:01:00Z",
-    turn_count: overrides.turn_count ?? 1,
-    total_tokens: overrides.total_tokens ?? 1280,
-    duration_ms: overrides.duration_ms ?? 60000,
-    latest_model: "GPT-5.5",
-    conversation_revision: overrides.conversation_revision ?? 0,
   };
 }
 
@@ -1544,6 +1502,7 @@ export function prepareDefaults() {
     });
   });
   mocks.listWorkspaceChatsMock.mockResolvedValue([]);
+  mocks.listPriorityChatsMock.mockResolvedValue([]);
   mocks.getChatWithRunsMock.mockImplementation(async (chatId: number) =>
     workspaceChatWithRunsFixture(workspaceChatFixture({ id: chatId })),
   );
@@ -2014,3 +1973,13 @@ export {
   ORCHESTRATOR_CONTEXT_FILE_MIME,
 };
 export type { PromptQueueItem, RunListItem };
+
+export async function openSidebarChats(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Chats" }));
+  const activeRoot = document.querySelector(".workspace-root-row.active");
+  const toggle = activeRoot?.querySelector<HTMLButtonElement>(".workspace-tree-chevron");
+  if (toggle?.getAttribute("aria-expanded") === "false") await user.click(toggle);
+}
+export function sidebarChats() {
+  return screen.getByRole("navigation", { name: "Workspaces" });
+}

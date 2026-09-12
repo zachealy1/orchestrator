@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -307,13 +309,8 @@ describe("Application runtime scenarios 4", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", {
           name: /implement configurable plan/i,
@@ -472,13 +469,8 @@ describe("Application runtime scenarios 4", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", {
           name: /cancel implementation settings/i,
@@ -707,12 +699,8 @@ describe("Application runtime scenarios 4", () => {
 
       const { user } = await renderApp();
       const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /persisted native plan/i }),
       );
@@ -749,19 +737,14 @@ describe("Application runtime scenarios 4", () => {
       const { card } = preparePersistedBoardPlanReview();
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /board planning ticket/i }),
       );
       // Complete the CSS transition explicitly so plan loading does not wait for its fallback timer.
       fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      expect(drawer).toHaveClass("closed");
+      expect(drawer).toBeVisible();
       await user.click(
         await screen.findByRole("button", { name: "Accept plan" }),
       );
@@ -806,18 +789,13 @@ describe("Application runtime scenarios 4", () => {
       });
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /board planning ticket/i }),
       );
       fireEvent.transitionEnd(drawer, { propertyName: "transform" });
-      expect(drawer).toHaveClass("closed");
+      expect(drawer).toBeVisible();
       await user.click(
         await screen.findByRole("button", { name: "Reject plan" }),
       );
@@ -870,13 +848,8 @@ describe("Application runtime scenarios 4", () => {
       mocks.listLocalChatTranscriptMock.mockResolvedValue([run]);
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", {
           name: /make a plan for adding the greeting/i,
@@ -944,6 +917,7 @@ describe("Application runtime scenarios 4", () => {
         .mockResolvedValue(modifiedStatus);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -999,6 +973,7 @@ describe("Application runtime scenarios 4", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1061,6 +1036,7 @@ describe("Application runtime scenarios 4", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1118,6 +1094,7 @@ describe("Application runtime scenarios 4", () => {
         ],
       });
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1185,6 +1162,7 @@ describe("Application runtime scenarios 4", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1255,6 +1233,7 @@ describe("Application runtime scenarios 4", () => {
       );
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1296,6 +1275,7 @@ describe("Application runtime scenarios 4", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1330,6 +1310,7 @@ describe("Application runtime scenarios 4", () => {
       ]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const primaryNav = screen.getByRole("navigation", {
         name: "Primary",
       });
@@ -1392,6 +1373,7 @@ describe("Application runtime scenarios 4", () => {
       );
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1729,6 +1711,7 @@ describe("Application runtime scenarios 4", () => {
       ]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1767,6 +1750,7 @@ describe("Application runtime scenarios 4", () => {
       ]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -1822,6 +1806,7 @@ describe("Application runtime scenarios 4", () => {
       );
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const promptInput = screen.getByLabelText("Prompt");
 
       await user.type(promptInput, "@app");
@@ -1861,6 +1846,7 @@ describe("Application runtime scenarios 4", () => {
       ]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const promptInput = screen.getByLabelText("Prompt");
       await user.type(promptInput, "Update @app");
       await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));

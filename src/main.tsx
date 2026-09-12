@@ -2,7 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { OrchestratorTooltipLayer } from "./components/OrchestratorTooltipLayer";
-import DrawerSyncDiagnostics from "./drawerSyncDiagnostics";
 import TranscriptRestoreDiagnostics from "./transcriptRestoreDiagnostics";
 import TranscriptScrollDiagnostics from "./transcriptScrollDiagnostics";
 import TranscriptWorkspaceReturnDiagnostics from "./transcriptWorkspaceReturnDiagnostics";
@@ -32,8 +31,6 @@ function ApplicationRoot() {
         <TranscriptWorkspaceReturnDiagnostics />
       ) : import.meta.env.VITE_TRANSCRIPT_SCROLL_PROFILE === "1" ? (
         <TranscriptScrollDiagnostics />
-      ) : import.meta.env.VITE_DRAWER_SYNC_PROFILE === "1" ? (
-        <DrawerSyncDiagnostics />
       ) : (
         <App />
       )}

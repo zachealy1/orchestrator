@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -95,6 +97,7 @@ describe("Application runtime scenarios 5", () => {
       ]);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       await user.type(screen.getByLabelText("Prompt"), "@app");
 
       const listbox = await screen.findByRole("listbox", {
@@ -140,6 +143,7 @@ describe("Application runtime scenarios 5", () => {
       );
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const promptInput = screen.getByLabelText("Prompt");
 
       await user.type(promptInput, "@app");
@@ -1400,13 +1404,8 @@ describe("Application runtime scenarios 5", () => {
         expect.any(Object),
       );
 
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       expect(within(drawer).getByText("Generating title...")).toBeInTheDocument();
 
       await act(async () => {
@@ -1792,13 +1791,8 @@ describe("Application runtime scenarios 5", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /build snake controls/i }),
       );
@@ -1915,13 +1909,8 @@ describe("Application runtime scenarios 5", () => {
       );
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", {
           name: /keep original ownership/i,

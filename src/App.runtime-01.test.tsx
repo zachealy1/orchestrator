@@ -57,6 +57,7 @@ describe("Application runtime scenarios 1", () => {
       mocks.openDialogMock.mockResolvedValue("/repo/new-workspace");
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const primaryNav = screen.getByRole("navigation", {
         name: "Primary",
       });
@@ -305,6 +306,7 @@ describe("Application runtime scenarios 1", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -360,6 +362,7 @@ describe("Application runtime scenarios 1", () => {
       mocks.readWorkspaceFilePreviewMock.mockReturnValue(pendingPreview);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });
@@ -430,6 +433,7 @@ describe("Application runtime scenarios 1", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
         name: "Workspaces",
       });

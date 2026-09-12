@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -48,16 +50,10 @@ describe("Application runtime scenarios 10", () => {
     );
 
     const { user } = await renderApp();
-    const banner = screen.getByRole("region", { name: "Selected folder" });
-    const historyButton = within(banner).getByRole("button", {
-      name: /open chat history/i,
-    });
 
     const selectChat = async (title: string, chatId: number) => {
-      await user.click(historyButton);
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", {
           name: new RegExp(title, "i"),
@@ -76,16 +72,14 @@ describe("Application runtime scenarios 10", () => {
         ).toBeInTheDocument();
       });
 
-      await user.click(historyButton);
-      const reopenedDrawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const reopenedDrawer = sidebarChats();
       expect(
         within(reopenedDrawer).getByRole("button", {
           name: new RegExp(title, "i"),
         }),
       ).toHaveAttribute("aria-pressed", "true");
-      await user.click(historyButton);
+      await openSidebarChats(user);
     };
 
     await selectChat("Alpha conversation", 411);
@@ -134,13 +128,8 @@ describe("Application runtime scenarios 10", () => {
     mocks.listLocalChatTranscriptMock.mockResolvedValue(historicalRuns);
 
     const { user } = await renderApp();
-    const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(
-      within(banner).getByRole("button", { name: /open chat history/i }),
-    );
-    const drawer = await screen.findByRole("complementary", {
-      name: "Workspace chat history",
-    });
+    await openSidebarChats(user);
+    const drawer = sidebarChats();
     await user.click(
       within(drawer).getByRole("button", {
         name: /expressjs app scaffolding plan/i,

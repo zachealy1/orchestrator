@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -39,8 +41,8 @@ describe("Plan output recovery", () => {
     mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
     mocks.getChatWithRunsMock.mockResolvedValue(workspaceChatWithRunsFixture(chat, [run]));
     const { user } = await renderApp();
-    await user.click(screen.getByRole("button", { name: /open chat history/i }));
-    const drawer = await screen.findByRole("complementary", { name: "Workspace chat history" });
+    await openSidebarChats(user);
+    const drawer = sidebarChats();
     await user.click(within(drawer).getByRole("button", { name: /Diagnostic question/i }));
     await screen.findByText("Which error are you seeing?");
     expect(screen.queryByRole("button", { name: "Accept plan" })).not.toBeInTheDocument();
@@ -165,13 +167,8 @@ describe("Plan output recovery", () => {
     mocks.listLocalChatTranscriptMock.mockResolvedValue([run]);
 
     const { user } = await renderApp();
-    const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(
-      within(banner).getByRole("button", { name: /open chat history/i }),
-    );
-    const drawer = await screen.findByRole("complementary", {
-      name: "Workspace chat history",
-    });
+    await openSidebarChats(user);
+    const drawer = sidebarChats();
     await user.click(
       within(drawer).getByRole("button", {
         name: /plan a game in this repository/i,
