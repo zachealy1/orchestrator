@@ -16,7 +16,7 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, CodexProfileKey, ModelListResponse } from "./features/codex/types";
-import type { CodexAccountRateLimitsResponse } from "./features/analytics/usageLimits";
+import type { CodexAccountRateLimitsResponse, CodexUsageResetResponse } from "./features/analytics/usageLimits";
 import type { DesktopRuntimeStatus } from "./features/interaction/types";
 import type { CodexSkillSummary, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot } from "./features/conversations/types";
@@ -169,6 +169,23 @@ export function readCodexRateLimits(
         "account/rateLimits/read",
         null,
       );
+}
+
+export async function consumeCodexRateLimitResetCredit(
+  profileKey: CodexProfileKey,
+  accountId: number,
+  idempotencyKey: string,
+): Promise<CodexUsageResetResponse> {
+  if (!idempotencyKey.trim()) throw new Error("A reset request ID is required.");
+  const method = "account/rateLimitResetCredit/consume";
+  const params = { idempotencyKey };
+  const response = profileKey === "default"
+    ? await codexDefaultProfileRpc<CodexUsageResetResponse>(method, params)
+    : await codexRpc<CodexUsageResetResponse>(accountId, method, params);
+  if (!response || !["reset", "alreadyRedeemed", "nothingToReset", "noCredit"].includes(response.outcome)) {
+    throw new Error("Codex returned an invalid usage-reset response.");
+  }
+  return response;
 }
 
 export async function codexDefaultProfileRpc<T>(

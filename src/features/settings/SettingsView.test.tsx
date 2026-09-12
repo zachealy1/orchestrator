@@ -1,3 +1,4 @@
+import { emptySettingsUsage, settingsUsageActions } from "../../test/settingsUsageFixture";
 import {
   act,
   fireEvent,
@@ -17,6 +18,7 @@ function actions(
   overrides: Partial<SettingsViewActions> = {},
 ): SettingsViewActions {
   return {
+    usage: settingsUsageActions(),
     setComputerUseEnabled: vi.fn(),
     setBrowserAskWhereToSave: vi.fn(),
     chooseBrowserDownloadLocation: vi.fn(),
@@ -143,6 +145,7 @@ function model(overrides: Partial<SettingsViewModel> = {}): SettingsViewModel {
     authMessage: "No account selected",
     authError: null,
     showLogout: false,
+    usage: emptySettingsUsage,
     ...overrides,
   };
 }
@@ -1531,4 +1534,23 @@ describe("Settings warning details", () => {
     expect(within(screen.getByRole("dialog")).queryByRole("button")).toBeNull();
   });
 
+});
+
+describe("Settings account usage", () => {
+  it("uses an independent usage account selector and explains unsupported availability", () => {
+    const usage = { ...emptySettingsUsage, accounts: [
+      { accountId: 0, profileKey: "default" as const, label: "Shared Codex", planType: "plus" as const },
+      { accountId: 8, profileKey: "account:8" as const, label: "Other account", planType: "plus" as const },
+    ], selectedAccountId: 0 };
+    const bindings = actions();
+    const view = render(<SettingsView model={model({ usage })} actions={bindings} />);
+    const panel = screen.getByRole("region", { name: "Account usage" });
+    fireEvent.click(within(panel).getByRole("combobox", { name: "Usage account" }));
+    fireEvent.click(screen.getByRole("option", { name: "Other account" }));
+    expect(bindings.usage.selectAccount).toHaveBeenCalledWith(8);
+    expect(bindings.selectAccount).not.toHaveBeenCalled();
+    view.rerender(<SettingsView model={model({ usage: { ...usage, state: { ...usage.state, status: "unsupported" } } })} actions={bindings} />);
+    expect(within(panel).getByText("Earned reset availability is unavailable.")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Use 1 reset" })).toBeDisabled();
+  });
 });

@@ -1,3 +1,4 @@
+import { emptySettingsUsage, settingsUsageActions } from "../../test/settingsUsageFixture";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { EMPTY_PLUGIN_CATALOG } from "../plugins/types";
@@ -49,6 +50,7 @@ function model(): SettingsViewModel {
     authMessage: "No account selected",
     authError: null,
     showLogout: false,
+    usage: emptySettingsUsage,
   };
 }
 
@@ -56,6 +58,7 @@ function actions(
   overrides: Partial<SettingsViewActions> = {},
 ): SettingsViewActions {
   return {
+    usage: settingsUsageActions(),
     setComputerUseEnabled: () => undefined,
     setBrowserAskWhereToSave: () => undefined,
     chooseBrowserDownloadLocation: () => undefined,

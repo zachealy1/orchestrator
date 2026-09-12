@@ -2068,7 +2068,7 @@ function App() {
   const codexUsageLimits = useCodexUsageLimitsController({
     accounts: analyticsUsageAccounts,
     preferredAccountId: selectedAccountId,
-    active: activeView === "analytics",
+    active: activeView === "analytics" || activeView === "settings",
     load: loadAnalyticsUsageLimits,
   });
   const codexConnected =
@@ -20549,6 +20549,7 @@ function App() {
   });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
+      usage: codexUsageLimits.settingsModel,
       dragRegion: selfWindowDragRegion,
       computerUseEnabled,
       browserPreferences,
@@ -20577,6 +20578,7 @@ function App() {
       showLogout,
     },
     actions: {
+      usage: codexUsageLimits.settingsActions,
       setComputerUseEnabled,
       setBrowserAskWhereToSave,
       chooseBrowserDownloadLocation: () => {

@@ -390,7 +390,8 @@ button.pending-interaction-nav:disabled {
 .settings-overview,
 .browser-settings-panel,
 .computer-use-settings-panel,
-.codex-settings-panel {
+.codex-settings-panel,
+.settings-account-usage {
   grid-column: 1 / -1;
 }
 
@@ -3130,4 +3131,53 @@ i.fresh {
   .analytics-usage-refreshing svg {
     animation: none;
   }
+}
+
+.settings-account-usage .analytics-usage-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-account-usage .settings-usage-reset-row {
+  border-top: 1px solid var(--color-divider);
+  border-bottom: 0;
+}
+
+.settings-panel .setting-row > .settings-usage-reset-actions,
+.settings-usage-reset-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-usage-reset-button {
+  padding: 8px 12px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius);
+  background: var(--color-button-secondary);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-usage-reset-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-usage-reset-message {
+  margin: 0;
+  padding: 0 18px 16px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 620px) {
+  .settings-account-usage .settings-usage-reset-row { grid-template-columns: minmax(0, 1fr); }
+  .settings-panel .setting-row > .settings-usage-reset-actions { justify-content: flex-start; }
 }
