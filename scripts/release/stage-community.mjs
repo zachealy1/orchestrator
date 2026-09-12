@@ -7,10 +7,10 @@ import { confidentialRun } from "./safe-process.mjs";
 import { COMMUNITY_NOTICE } from "./distribution.mjs";
 
 export function stagingTarget(env) {
-  if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_REF !== "refs/heads/release"
+  if (env.GITHUB_REPOSITORY !== REPOSITORY || env.GITHUB_REF !== "refs/heads/main"
     || !/^[a-f0-9]{40}$/.test(env.RELEASE_SOURCE_SHA ?? "")
     || !/^community-build-\d+-\d+$/.test(env.STAGING_TAG ?? "")) {
-    throw new Error("Community staging requires the trusted repository, release-branch workflow and exact source");
+    throw new Error("Community staging requires the trusted repository, main-branch workflow and exact source");
   }
   return { tag: env.STAGING_TAG, sourceSha: env.RELEASE_SOURCE_SHA };
 }
@@ -30,7 +30,7 @@ export async function stageCommunity(mode, env = process.env, run = confidential
   if (mode === "prepare") {
     gh(["release", "create", target.tag, "--draft", "--prerelease", "--target", target.sourceSha,
       "--title", `Community beta packages ${target.tag}`, "--notes",
-      `${COMMUNITY_NOTICE}\n\nPackage staging only; not behaviorally tested. Source: ${target.sourceSha}. Both architectures must finish before publication. No logs or account data belong here.`]);
+      `${COMMUNITY_NOTICE}\n\nPackage staging only; packaging performs integrity checks, without a separate installer or update rehearsal. Source: ${target.sourceSha}. Both architectures must finish before publication. No logs or account data belong here.`]);
   }
   // REST's /releases/tags endpoint cannot resolve a draft's pending tag. The CLI
   // performs the separate draft lookup; do not accidentally require publication.

@@ -105,12 +105,12 @@ test("concurrent feed changes fail without retrying or overwriting the competing
   assert.equal(h.calls.at(-1).body.force, false);
 });
 
-test("community publication is beta-only, bound to release ancestry and visibly non-notarized", async () => {
+test("community publication is beta-only, bound to main ancestry and visibly non-notarized", async () => {
   const h = harness();
   await h.run({ profile: "community", approval: {} });
-  assert.ok(h.calls.some(c => c.path.endsWith(`/compare/${sourceSha}...release`)));
+  assert.ok(h.calls.some(c => c.path.endsWith(`/compare/${sourceSha}...main`)));
   assert.match(h.calls.find(c => c.path.endsWith("/releases")).body.body, /not notarized by Apple/);
-  assert.match(h.calls.find(c => c.path.endsWith("/releases")).body.body, /not behaviorally tested/);
+  assert.match(h.calls.find(c => c.path.endsWith("/releases")).body.body, /package integrity checks/);
   const feed = JSON.parse(h.calls.find(c => c.path.endsWith("/git/trees")).body.tree[0].content);
   assert.equal(feed.distribution, "community"); assert.match(feed.notes, /not notarized by Apple/);
   for (const overrides of [{ sourceSha: "release" }, { version: "0.2.0" }]) {
@@ -118,7 +118,7 @@ test("community publication is beta-only, bound to release ancestry and visibly 
     assert.equal(blocked.calls.length, 0);
   }
   const diverged = harness({ diverged: true });
-  await assert.rejects(diverged.run({ profile: "community", approval: {} }), /ancestor of release/);
+  await assert.rejects(diverged.run({ profile: "community", approval: {} }), /ancestor of main/);
   assert.equal(diverged.calls.filter(c => c.method).length, 0);
 });
 

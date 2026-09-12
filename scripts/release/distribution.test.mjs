@@ -75,9 +75,9 @@ test("receipts bind version, source, architecture, trust profile and every artif
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 test("staging cannot target another repo, a contributor branch or a published release", () => {
-  const env = { GITHUB_REPOSITORY: "zachealy1/orchestrator", GITHUB_REF: "refs/heads/release", RELEASE_SOURCE_SHA: sourceSha, STAGING_TAG: "community-build-123-1" };
+  const env = { GITHUB_REPOSITORY: "zachealy1/orchestrator", GITHUB_REF: "refs/heads/main", RELEASE_SOURCE_SHA: sourceSha, STAGING_TAG: "community-build-123-1" };
   const target = stagingTarget(env);
-  for (const changed of [{ GITHUB_REPOSITORY: "someone/fork" }, { GITHUB_REF: "refs/pull/1/merge" }, { GITHUB_REF: "refs/heads/main" }, { RELEASE_SOURCE_SHA: "release" }, { STAGING_TAG: "v0.2.0-beta.1" }]) {
+  for (const changed of [{ GITHUB_REPOSITORY: "someone/fork" }, { GITHUB_REF: "refs/pull/1/merge" }, { GITHUB_REF: "refs/heads/release" }, { RELEASE_SOURCE_SHA: "release" }, { STAGING_TAG: "v0.2.0-beta.1" }]) {
     assert.throws(() => stagingTarget({ ...env, ...changed }));
   }
   const release = { draft: true, tag_name: target.tag, target_commitish: sourceSha, body: COMMUNITY_NOTICE };
@@ -89,13 +89,13 @@ test("staging cannot target another repo, a contributor branch or a published re
 test("the free workflow requires manual release dispatch, both packages and isolated secrets", async () => {
   const workflow = await readFile(".github/workflows/community-beta.yml", "utf8");
   assert.doesNotMatch(workflow, /APPLE_|upload-artifact|download-artifact|pull_request:|pull_request_target:|secrets: inherit/);
-  for (const expected of ["workflow_dispatch:", "macos-15-intel", "TAURI_SIGNING_PRIVATE_KEY", "environment: public-beta-signing", "environment: public-beta-publishing", "group: orchestrator-publication", 'test "$GITHUB_REF" = refs/heads/release', 'git merge-base --is-ancestor "$REF" origin/release']) assert.ok(workflow.includes(expected));
+  for (const expected of ["workflow_dispatch:", "macos-15-intel", "TAURI_SIGNING_PRIVATE_KEY", "environment: public-beta-signing", "environment: public-beta-publishing", "group: orchestrator-publication", 'test "$GITHUB_REF" = refs/heads/main', 'git merge-base --is-ancestor "$REF" origin/main']) assert.ok(workflow.includes(expected));
   assert.match(workflow, /needs: \[authorize, package\]/);
   assert.match(workflow, /RELEASE_SOURCE_SHA: \$\{\{ needs.authorize.outputs.sha \}\}/);
 });
 
 test("draft staging uses the CLI's draft-aware lookup and never publishes or overwrites assets", async () => {
-  const env = { GITHUB_REPOSITORY: "zachealy1/orchestrator", GITHUB_REF: "refs/heads/release", RELEASE_SOURCE_SHA: sourceSha, STAGING_TAG: "community-build-123-1" };
+  const env = { GITHUB_REPOSITORY: "zachealy1/orchestrator", GITHUB_REF: "refs/heads/main", RELEASE_SOURCE_SHA: sourceSha, STAGING_TAG: "community-build-123-1" };
   const calls = [], run = (bin, args) => {
     assert.equal(bin, "gh"); calls.push(args);
     if (args[1] === "create") return "";
