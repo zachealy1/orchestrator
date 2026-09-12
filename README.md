@@ -48,7 +48,7 @@ Start with a prompt, keep the conversation alongside your workspace, and follow 
 
 [![Taskboard Demo conversation showing the updated transcript, a readable Markdown table and the prompt composer.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
 
-*Real tasks in a fictional local project. Account identity details are removed for privacy; task results and activity are genuine. Click any screenshot to view it at full size.*
+*Chat and Kanban were captured from the beta.2 candidate using the fictional Taskboard Demo. Account identities are removed; task results and activity remain genuine. Click any screenshot to view it at full size.*
 
 ## Feature tour
 
@@ -62,7 +62,9 @@ Expand a workspace in the sidebar and select a file to read its contents beside 
 
 Turn ideas into cards and follow each task from preparation through execution and review. Select the target branch in the board toolbar for new card branches and pull requests. Chat and Kanban share the same workspace, so you can choose the view that fits the work.
 
-[![Taskboard Demo's Kanban board, showing named tasks at different stages of work.](docs/assets/screenshots/kanban.png)](docs/assets/screenshots/kanban.png)
+[![Taskboard Demo Kanban board with the target-branch selector beside refresh and archive, and genuine backlog and review cards.](docs/assets/screenshots/kanban.png)](docs/assets/screenshots/kanban.png)
+
+*The target-branch selector sits immediately before refresh and archive. The existing demo cards retain their actual backlog and local-review states.*
 
 ### See what subagents are doing
 
