@@ -7,6 +7,7 @@ import { AppServices } from "../runtime/AppServices";
 import { renderWithAppServices } from "../test/renderWithAppServices";
 import { OrchestratorTooltipLayer } from "./OrchestratorTooltipLayer";
 import { SubagentInspector } from "./SubagentInspector";
+import { markdownTableFixture } from "../test/markdownTableFixture";
 
 vi.mock("react-virtuoso", () => ({
   Virtuoso: ({
@@ -140,6 +141,23 @@ function renderInspector(
 }
 
 describe("SubagentInspector", () => {
+  it("formats tables in both commentary and final replies", async () => {
+    renderInspector("tables", (threadId) => {
+      const result = transcript(threadId);
+      for (const item of result.turns[0]!.items) {
+        if (item.kind === "assistant") item.text = markdownTableFixture;
+      }
+      return result;
+    });
+    const tables = await screen.findAllByRole("table");
+    expect(tables).toHaveLength(2);
+    for (const table of tables) {
+      expect(table.parentElement).toHaveClass("markdown-table-scroll");
+      expect(within(table).getAllByRole("columnheader")).toHaveLength(4);
+      expect(within(table).getByRole("cell", { name: "12" })).toHaveStyle({ textAlign: "right" });
+    }
+  });
+
   it("loads a projected transcript lazily and sends text steering", async () => {
     const { user, subagent, onLoadTranscript, onSteer } =
       renderInspector("steer");
@@ -159,7 +177,7 @@ describe("SubagentInspector", () => {
     expect(screen.getByLabelText("Submitted prompt")).toHaveClass(
       "submitted-prompt",
     );
-    expect(screen.getByText("Inspection underway")).toHaveClass(
+    expect(screen.getByText("Inspection underway").closest(".stream-message")).toHaveClass(
       "stream-message",
     );
     expect(
@@ -365,9 +383,9 @@ describe("SubagentInspector", () => {
     });
 
     expect(
-      await screen.findByText("Checking another endpoint", undefined, {
+      (await screen.findByText("Checking another endpoint", undefined, {
         timeout: 1_500,
-      }),
+      })).closest(".stream-message"),
     ).toHaveClass("stream-message");
     expect(onLoadTranscript).toHaveBeenCalledTimes(2);
   });

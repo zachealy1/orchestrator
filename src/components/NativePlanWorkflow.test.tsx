@@ -272,6 +272,7 @@ describe("native Plan transcript workflow", () => {
     expect(toggle).toHaveAccessibleName("Hide full plan");
     expect(document.getElementById(contentId!)).not.toHaveClass("collapsed");
     expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("table").parentElement).toHaveClass("markdown-table-scroll");
     expect(screen.getByRole("heading", { name: "Risks" })).toBeInTheDocument();
 
     await user.keyboard("{Enter}");
