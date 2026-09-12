@@ -1146,6 +1146,10 @@ describe("Application runtime scenarios 9", () => {
       cardId: currentCard.id, executionRoot: bindings[0].executionRoot,
       repositories: bindings, errors: [], complete: true, rolledBack: false,
     });
+    mocks.saveKanbanGitBindingsMock.mockImplementation(async (_card, savedBindings) => {
+      mocks.loadKanbanGitBindingsMock.mockResolvedValue(savedBindings);
+      return savedBindings;
+    });
     const { user } = await renderApp();
     await user.click(await screen.findByRole("radio", { name: "Kanban" }));
     await user.click(screen.getByRole("button", { name: "Start test Kanban agent" }));
@@ -1188,7 +1192,10 @@ describe("Application runtime scenarios 9", () => {
     });
     mocks.saveKanbanGitBindingsMock
       .mockRejectedValueOnce(new Error("The card version changed"))
-      .mockResolvedValueOnce([binding]);
+      .mockImplementationOnce(async () => {
+        mocks.loadKanbanGitBindingsMock.mockResolvedValue([binding]);
+        return [binding];
+      });
     const initialAttempt = await mocks.claimKanbanAttemptMock.getMockImplementation()!();
     mocks.loadKanbanBoardMock.mockImplementation(async () => {
       if (mocks.claimKanbanAttemptMock.mock.results.length === 0) {

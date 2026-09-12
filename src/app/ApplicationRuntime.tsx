@@ -226,6 +226,7 @@ import {
   type NativeTaskWorkspaceBinding,
 } from "../lib/nativeTaskWorkspaceBinding";
 import { normalizeExternalTranscriptUrl } from "../lib/transcriptLinks";
+import { resolveExecutionContext, readExecutionFileContext } from "../features/runs/executionContext";
 import {
   comparePromptQueueDisplayOrder,
   comparePromptQueueDispatchOrder,
@@ -358,7 +359,7 @@ import {
   codexRecoveryBlockedByActiveRunError,
   isRecoverableCodexTransportError,
 } from "../features/codex/connectionRecovery";
-import type { AdditionalContextEntry, PreflightReport, RunExecutionSettings } from "../features/runs/types";
+import type { PreflightReport, RunExecutionSettings } from "../features/runs/types";
 import type { AnalyticsDateRange } from "../features/analytics/types";
 import { useAnalyticsController } from "../features/analytics/useAnalyticsController";
 import { useCodexUsageLimitsController } from "../features/analytics/useCodexUsageLimitsController";
@@ -12026,9 +12027,8 @@ function App() {
     }
     ensureRunControlActive(runControl);
 
-    snapshot.contextFiles = await prepareContextImageFiles(
-      snapshot.contextFiles,
-      imageAttachments,
+    snapshot.contextFiles = await prepareRunContextImages(
+      runControl, snapshot.promptText, snapshot.contextFiles,
     );
     snapshot.executionSettings = createRunExecutionSettings({
       ...snapshot.executionSettings,
@@ -12489,14 +12489,9 @@ function App() {
       selectedSkills,
       selectedSkills.length ? await getCodexSkills(snapshot.profileKey, snapshot.accountId, true) : [],
     );
-    const text = snapshot.promptText;
-    const input = buildCodexTurnInput(text, snapshot.contextFiles, skills);
-    let { additionalContext, skippedFiles } = await buildAdditionalContext(
-      snapshot.profileKey,
-      snapshot.accountId,
-      snapshot.contextFiles,
-      snapshot.workspace.id,
-    );
+    const context = await resolveRunExecutionContext(runControl, snapshot.promptText, snapshot.contextFiles);
+    let { additionalContext, skippedFiles, files } = await buildAdditionalContext(runControl, context.attachments);
+    const input = buildCodexTurnInput(context.prompt, files, skills);
     if (snapshot.workspaceRepositoryContext) {
       additionalContext = {
         ...(additionalContext ?? {}),
@@ -12536,7 +12531,7 @@ function App() {
         `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
       );
     }
-    return { text, input, additionalContext };
+    return { text: context.prompt, input, additionalContext };
   }
 
   async function registerNativeTaskSourceRoot(
@@ -14406,16 +14401,11 @@ function App() {
       const steeringItem = await markPromptQueueItemSteering(currentItem.id);
       if (!steeringItem) return true;
       upsertPromptQueueItemInMemory(steeringItem);
-      const preparedFiles = await prepareContextImageFiles(
-        currentItem.snapshot.executionSettings.contextFiles,
-        imageAttachments,
+      const preparedFiles = await prepareRunContextImages(
+        control, currentItem.prompt, currentItem.snapshot.executionSettings.contextFiles,
       );
-      const { additionalContext, skippedFiles } = await buildAdditionalContext(
-        control.profileKey,
-        control.accountId,
-        preparedFiles,
-        currentItem.workspaceId,
-      );
+      const context = await resolveRunExecutionContext(control, currentItem.prompt, preparedFiles);
+      const { additionalContext, skippedFiles, files } = await buildAdditionalContext(control, context.attachments);
       const selectedSkills = currentItem.snapshot.executionSettings.selectedSkills;
       const skills = resolveSelectedSkills(
         selectedSkills,
@@ -14436,7 +14426,7 @@ function App() {
           threadId: control.threadId,
           expectedTurnId: control.turnId,
           clientUserMessageId: currentItem.clientMessageId,
-          input: buildCodexTurnInput(currentItem.prompt, preparedFiles, skills),
+          input: buildCodexTurnInput(context.prompt, files, skills),
           additionalContext,
         },
       );
@@ -15764,51 +15754,52 @@ function App() {
     );
   }
 
-  async function buildAdditionalContext(
-    profileKey: CodexProfileKey,
-    accountId: number,
-    files: ComposerContextFile[],
-    workspaceId: number,
+  async function resolveRunExecutionContext(
+    control: ActiveRunControl, prompt: string, files: ComposerContextFile[],
   ) {
-    const additionalContext: Record<string, AdditionalContextEntry> = {};
-    const errors = new Map<string, string>();
-    const skippedFiles: string[] = [];
-
-    for (const file of files.filter((file) => !isImageContextFile(file))) {
-      try {
-        const content = await readCodexFileForProfile(
-          profileKey,
-          accountId,
-          file.path,
-        );
-        additionalContext[`file:${file.path}`] = {
-          kind: "untrusted",
-          value: `File: ${file.path}\n\n${content}`,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.set(file.path, message);
-        skippedFiles.push(file.name);
-      }
+    const bindings = control.kanbanAttempt
+      ? await loadKanbanGitBindings(control.kanbanAttempt.cardId)
+      : control.chatId !== null ? await listChatWorktreeBindings(control.chatId) : [];
+    ensureRunControlActive(control);
+    if (control.kanbanAttempt && bindings.length === 0) {
+      throw new Error("The card worktree bindings are unavailable, so file references cannot be resolved.");
     }
+    return resolveExecutionContext(prompt, files, bindings);
+  }
 
-    const rememberedFiles =
-      workspaceTaskMemories.records[workspaceId]?.contextFiles ?? files;
-    updateRememberedWorkspaceComposer(workspaceId, {
-      contextFiles: rememberedFiles.map((file) =>
-        isImageContextFile(file)
-          ? { ...file, status: "ready", error: null }
-          : errors.has(file.path)
-            ? { ...file, status: "error", error: errors.get(file.path) }
-            : { ...file, status: "ready", error: null },
-      ),
+  async function prepareRunContextImages(
+    control: ActiveRunControl, prompt: string, files: ComposerContextFile[],
+  ) {
+    const { attachments } = await resolveRunExecutionContext(control, prompt, files);
+    // Repository attachments are prepared from the current worktree at payload
+    // time. Keep their original identity in saved settings and the composer.
+    const external = await prepareContextImageFiles(
+      attachments.filter((attachment) => !attachment.worktree).map(({ file }) => file), imageAttachments,
+    );
+    let index = 0;
+    return attachments.map(({ original, worktree }) => worktree ? original : external[index++]);
+  }
+
+  async function buildAdditionalContext(
+    control: ActiveRunControl,
+    attachments: ReturnType<typeof resolveExecutionContext>["attachments"],
+  ) {
+    const result = await readExecutionFileContext(attachments, {
+      readFile: (path) => readCodexFileForProfile(control.profileKey, control.accountId, path),
+      prepareImage: async (file) => (await prepareContextImageFiles([file], imageAttachments))[0],
     });
-
-    return {
-      additionalContext:
-        Object.keys(additionalContext).length > 0 ? additionalContext : null,
-      skippedFiles,
-    };
+    ensureRunControlActive(control);
+    const rememberedFiles = workspaceTaskMemories.records[control.workspaceId]?.contextFiles
+      ?? attachments.map(({ original }) => original);
+    updateRememberedWorkspaceComposer(control.workspaceId, {
+      contextFiles: rememberedFiles.map((file) => ({
+        ...file,
+        status: result.errors.has(file.path) ? "error" : "ready",
+        error: result.errors.get(file.path) ?? null,
+      })),
+    });
+    if (result.attachmentError) throw result.attachmentError;
+    return result;
   }
 
   async function handleAccountLoginCompleted(
