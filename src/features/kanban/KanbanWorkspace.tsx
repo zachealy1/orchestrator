@@ -1,3 +1,5 @@
+import { loadReviewRequirements, reviewRequestNoun, reviewRequestNumber, requestGroupChannel } from "../reviews/api";
+import { useGitlabConnections } from "../gitlab/useGitlabConnections";
 import {
   forwardRef,
   useCallback,
@@ -255,7 +257,7 @@ const COLUMN_COPY: Record<
 > = {
   todo: { title: "To do", description: "Ready to start" },
   in_progress: { title: "In progress", description: "Agent work and attention" },
-  in_review: { title: "In review", description: "Review and merge on GitHub" },
+  in_review: { title: "In review", description: "Review locally or with GitHub / GitLab" },
   done: { title: "Done", description: "Merged or explicitly completed work" },
 };
 
@@ -474,13 +476,13 @@ function PullRequestChooser({
       >
         <header>
           <div>
-            <h2 id="kanban-pr-chooser-title">Open pull request</h2>
+            <h2 id="kanban-pr-chooser-title">Open {reviewRequestNoun(requestGroupChannel(chooser.pullRequests))}</h2>
             <p id="kanban-pr-chooser-description">{chooser.cardTitle}</p>
           </div>
           <button
             type="button"
             className="native-plan-icon-action"
-            aria-label="Close pull request chooser"
+            aria-label={`Close ${reviewRequestNoun(requestGroupChannel(chooser.pullRequests))} chooser`}
             data-tooltip="Close"
             onClick={onClose}
           >
@@ -497,7 +499,7 @@ function PullRequestChooser({
             >
               <span>
                 <strong>{pullRequest.relativePath || pullRequest.repository}</strong>
-                <small>#{pullRequest.number} · {pullRequest.baseBranch}</small>
+                <small>{pullRequest.host ? `${pullRequest.host} · ` : ""}{reviewRequestNumber(pullRequest)} · {pullRequest.baseBranch}</small>
               </span>
               <ExternalLink size={16} aria-hidden="true" />
             </button>
@@ -746,6 +748,21 @@ function KanbanWorkspace({
     Record<string, KanbanGitBinding[] | undefined>
   >(initialCacheRef.current?.bindingsByCard ?? {});
   const bindingsByCardRef = useRef(bindingsByCard);
+  const { connections: gitlabConnections } = useGitlabConnections();
+  const [reviewRequirements, setReviewRequirements] = useState<Awaited<ReturnType<typeof loadReviewRequirements>> | null>(null);
+  const repositoryPaths = JSON.stringify(repositories.map(({ repository }) => repository.rootPath));
+  const connectionKey = JSON.stringify(gitlabConnections.map(({ host, connected }) => [host, connected]));
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    const refresh = async () => {
+      try { const requirements = await loadReviewRequirements(JSON.parse(repositoryPaths)); if (alive) setReviewRequirements(requirements); }
+      catch { if (alive) setReviewRequirements(null); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [active, repositoryPaths, connectionKey, githubConnection?.connected, workspace.id]);
   const [loading, setLoading] = useState(initialCacheRef.current === null);
   const [archivedLoaded, setArchivedLoaded] = useState(
     initialCacheRef.current?.includesArchived ?? false,
@@ -1132,7 +1149,7 @@ function KanbanWorkspace({
     const sync = () => {
       if (document.visibilityState !== "visible") return;
       void synchronizePullRequests().catch(() => {
-        // A disconnected GitHub account is represented by the persisted card state.
+        // A disconnected provider account is represented by the persisted card state.
       });
     };
     sync();
@@ -1357,7 +1374,10 @@ function KanbanWorkspace({
           );
           const hasPullRequest = card.pullRequests?.some((pullRequest) => pullRequest.url);
           if (
-            !githubConnection?.connected &&
+            !(reviewRequirements?.filter((requirement) =>
+              loadedBindings?.some((binding) => binding.sourceRepositoryPath === requirement.repositoryPath) ??
+              (card.config.repositoryScope === "all" || card.config.repositories.some((repository) => repository.repositoryPath === requirement.repositoryPath)),
+            ).every((requirement) => !requirement.message) ?? githubConnection?.connected) &&
             card.stage === "in_review" &&
             card.executionState === "completed" &&
             !hasPullRequest &&
@@ -1372,7 +1392,7 @@ function KanbanWorkspace({
         lastActivityAt: card.updatedAt,
       };
     },
-    [accountLabels, bindingsByCard, githubConnection?.connected, modelLabels, reasoningLabels],
+    [accountLabels, bindingsByCard, githubConnection?.connected, reviewRequirements, modelLabels, reasoningLabels],
   );
 
   const activeFilter = useMemo(
@@ -2260,7 +2280,7 @@ function KanbanWorkspace({
       aria-busy={busy}
       data-active={active ? "true" : "false"}
     >
-      {githubConnection && !githubConnection.connected ? (
+      {githubConnection && !githubConnection.connected && (reviewRequirements === null || reviewRequirements.some((requirement) => requirement.provider === "github")) ? (
         <div
           className="kanban-workspace-alert github-warning"
           role="status"
@@ -2305,6 +2325,12 @@ function KanbanWorkspace({
           ) : null}
         </div>
       ) : null}
+      {reviewRequirements?.filter((requirement) => requirement.message && requirement.provider !== "github").map((requirement) => (
+        <div className="kanban-workspace-alert" role="status" key={requirement.repositoryPath}>
+          <GitPullRequest size={16} aria-hidden="true" />
+          <span className="kanban-workspace-alert-copy"><strong>{requirement.host ?? "Repository connection"}</strong><span>{requirement.message}</span></span>
+        </div>
+      ))}
       {active
         ? toolbarHost === undefined
           ? toolbar
@@ -2482,7 +2508,7 @@ function KanbanWorkspace({
                 await publishKanbanCard(cardId);
                 setLocalReview(null);
               },
-              "Draft pull request publication started.",
+              `Draft ${reviewRequestNoun(localReview.review?.publicationDestination)} publication started.`,
             );
           }}
           onClose={() => setLocalReview(null)}

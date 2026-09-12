@@ -125,12 +125,20 @@ export const commands = {
 	kanbanCompleteLocalReviewWithoutChanges: (cardId: string) => __TAURI_INVOKE<KanbanCardDto>("kanban_complete_local_review_without_changes", { cardId }),
 	kanbanSetInheritedContext: (request: SetKanbanInheritedContextRequest) => __TAURI_INVOKE<null>("kanban_set_inherited_context", { request }),
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
+	gitlabConnections: () => __TAURI_INVOKE<GitlabConnectionStatus[]>("gitlab_connections"),
+	gitlabConnect: (host: string, token: string | null) => __TAURI_INVOKE<null>("gitlab_connect", { host, token }),
+	gitlabCancelConnection: (host: string) => __TAURI_INVOKE<null>("gitlab_cancel_connection", { host }),
+	gitlabDisconnect: (host: string) => __TAURI_INVOKE<null>("gitlab_disconnect", { host }),
+	reviewConnectionRequirements: (paths: string[]) => __TAURI_INVOKE<ReviewConnectionRequirement[]>("review_connection_requirements", { paths }),
+	reviewPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<ReviewPublicationResult>("review_publish_kanban_card", { cardId }),
+	reviewSyncKanbanRequests: (workspaceId: number | null, knownBoardRevision: number | null) => __TAURI_INVOKE<number>("review_sync_kanban_requests", { workspaceId, knownBoardRevision }),
+	reviewCompleteKanbanWithoutRequest: (cardId: string) => __TAURI_INVOKE<null>("review_complete_kanban_without_request", { cardId }),
 	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
 	githubConnect: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connect"),
 	githubContinueConnection: (generation: number, copyCode: boolean) => __TAURI_INVOKE<GithubConnectionStatus>("github_continue_connection", { generation, copyCode }),
 	githubCancelConnection: () => __TAURI_INVOKE<null>("github_cancel_connection"),
 	githubDisconnect: () => __TAURI_INVOKE<null>("github_disconnect"),
-	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<GithubPublicationResult>("github_publish_kanban_card", { cardId }),
+	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<ReviewPublicationResult>("github_publish_kanban_card", { cardId }),
 	githubSyncKanbanPullRequests: (workspaceId: number | null, knownBoardRevision: number | null) => __TAURI_INVOKE<number>("github_sync_kanban_pull_requests", { workspaceId, knownBoardRevision }),
 	githubCompleteKanbanWithoutPullRequest: (cardId: string) => __TAURI_INVOKE<null>("github_complete_kanban_without_pull_request", { cardId }),
 	kanbanGitProvision: (request: KanbanGitProvisionRequest) => __TAURI_INVOKE<KanbanGitProvisionResult>("kanban_git_provision", { request }),
@@ -390,9 +398,16 @@ export type GithubConnectionStatus = {
 	browserOpened: boolean,
 };
 
-export type GithubPublicationResult = {
-	cardId: string,
-	pullRequests: KanbanPullRequestDto[],
+export type GitlabConnectionStatus = {
+	host: string,
+	available: boolean,
+	connected: boolean,
+	login: string | null,
+	displayName: string | null,
+	avatarUrl: string | null,
+	status: string,
+	message: string | null,
+	cliVersion: string | null,
 };
 
 export type HistoricalCommandActivity = {
@@ -671,6 +686,9 @@ export type KanbanLocalReviewDto = {
 	summary: string | null,
 	reviewChannel: string,
 	canPublishGithub: boolean,
+	canPublishRemote: boolean,
+	publicationDestination: string | null,
+	publicationBlocker: string | null,
 	repositories: KanbanLocalReviewRepositoryDto[],
 };
 
@@ -689,6 +707,10 @@ export type KanbanLocalReviewRepositoryDto = {
 };
 
 export type KanbanPullRequestDto = {
+	provider: string,
+	host: string,
+	projectId: number | null,
+	projectPath: string | null,
 	sourceRepositoryPath: string,
 	relativePath: string,
 	owner: string | null,
@@ -839,6 +861,18 @@ export type RejectKanbanPlanRequest = {
 export type RejectedDroppedContextPath = {
 	path: string,
 	reason: string,
+};
+
+export type ReviewConnectionRequirement = {
+	repositoryPath: string,
+	provider: string | null,
+	host: string | null,
+	message: string | null,
+};
+
+export type ReviewPublicationResult = {
+	cardId: string,
+	pullRequests: KanbanPullRequestDto[],
 };
 
 export type RunEventWrite = {

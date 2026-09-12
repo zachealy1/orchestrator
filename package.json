@@ -13,7 +13,7 @@
     "check:architecture": "node scripts/check-architecture.mjs",
     "lint": "tsc --noEmit && npm run check:architecture && npm run check:bindings",
     "build:tauri": "npm run prepare:native-runtimes && node scripts/release/third-party-notices.mjs && npm run build",
-    "prepare:native-runtimes": "npm run prepare:github-cli-runtime && npm run prepare:codex-engine",
+    "prepare:native-runtimes": "npm run prepare:github-cli-runtime && npm run prepare:gitlab-cli-runtime && npm run prepare:codex-engine",
     "prepare:codex-engine": "node scripts/prepare-codex-engine.mjs",
     "prepare:github-cli-runtime": "node scripts/prepare-github-cli-runtime.mjs",
     "test": "vitest run",
@@ -25,7 +25,9 @@
     "test:live-plan": "RUN_CODEX_LIVE_PLAN_TEST=1 node scripts/live-native-plan-mode.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "prepare:gitlab-cli-runtime": "node scripts/prepare-gitlab-cli-runtime.mjs",
+    "test:gitlab-cli-runtime": "npm run prepare:gitlab-cli-runtime && node scripts/test-gitlab-cli-runtime.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",

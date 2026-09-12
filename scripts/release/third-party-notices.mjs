@@ -11,7 +11,8 @@ collect(npm.dependencies);
 const cargo = JSON.parse(execFileSync("cargo", ["metadata", "--manifest-path", "src-tauri/Cargo.toml", "--locked", "--format-version", "1"], { encoding: "utf8", maxBuffer: 30 * 1024 * 1024 }));
 for (const pkg of cargo.packages) if (pkg.name !== "orchestrator") packages.set(`cargo:${pkg.name}@${pkg.version}`, { directory: dirname(pkg.manifest_path), license: pkg.license ?? "See included licence", licenseFile: pkg.license_file });
 const text = ["# Third-party notices", "Generated from locked dependencies. Includes cross-platform and build-time dependencies for completeness; not every dependency is shipped on macOS."];
-const inventory = [];
+const inventory = [{ package: "native:glab@1.117.0", license: "MIT", includedLicenseTexts: 1 }];
+text.push("\n## native:glab@1.117.0\n\nLicence: MIT\n", await readFile("src-tauri/resources/gitlab-cli/LICENSE", "utf8"));
 for (const [name, pkg] of [...packages].sort(([a], [b]) => a.localeCompare(b))) {
   const files = (await readdir(pkg.directory)).filter((file) => /^(licen[cs]e|copying|notice)([.-]|$)/i.test(file));
   if (pkg.licenseFile && !files.includes(pkg.licenseFile)) files.push(pkg.licenseFile);

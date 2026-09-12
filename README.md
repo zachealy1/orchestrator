@@ -146,3 +146,28 @@ Orchestrator adds no application-user telemetry. Download reports use GitHub's a
 ## Licence
 
 Orchestrator's original source is [MIT licensed](LICENSE), copyright Zac Healy. Dependencies, bundled runtimes and third-party assets retain their own licences and notices. Packaging generates a third-party inventory; it does not relicense those components. `package.json` remains `private: true` to prevent accidental npm publication.
+
+### GitLab reviews
+
+Connect GitLab from **Settings → Connections → GitLab**. GitLab.com supports browser
+sign-in or a personal access token; self-managed hosts use a personal access token
+with the `api` scope. Multiple hosts can be connected at once, with one account per
+host. Credentials use macOS Keychain; CLI configuration is kept in Orchestrator's
+app data directory. Disconnecting a host leaves its saved card review links intact.
+
+When a card finishes, Orchestrator checks each repository's `origin`. If all
+repositories have connected GitHub or GitLab destinations, it publishes draft review
+requests, including mixed-provider cards. Otherwise it uses local review and explains
+which connection is missing. You can publish from local review before local merging
+starts. GitLab requests display `!number`; cards move to Done after all requests
+merge or have nothing to publish. Closed, unmerged requests stay in review.
+
+Self-managed instances require HTTPS with normal certificate verification. Custom
+HTTPS ports, SSH origins, and nested groups are supported. Pushes use the connected
+account over HTTPS. Custom SSH hostname aliases, GitLab subpath installations,
+fork-based requests, pipelines, and merging through the app are outside this integration.
+
+For development, `npm run prepare:gitlab-cli-runtime` installs the pinned GitLab CLI
+runtime for the current Mac architecture, and `npm run test:gitlab-cli-runtime` checks
+its version, integrity, and configuration isolation. Native runtime preparation and
+release validation include GitLab automatically.

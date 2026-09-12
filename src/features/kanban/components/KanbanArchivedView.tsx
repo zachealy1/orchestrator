@@ -26,7 +26,7 @@ const ARCHIVE_COLUMNS: Array<{
   {
     id: "in-review",
     title: "In review",
-    description: "Review and merge on GitHub",
+    description: "Review locally or with GitHub / GitLab",
   },
   {
     id: "done",

@@ -47,6 +47,17 @@ async function inspectApp(app) {
     run("cargo", ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--features", "dev-tools", "--bin", "verify-codex-engine", "--", join(engineDirectory, "codex"), pin.version]);
     assert.ok(run(ghBinary, ["--version"]).startsWith("gh version "));
   }
+  const glabDirectory = join(runtime, `gitlab-cli/darwin-${suffix}`);
+  const glabBinary = join(glabDirectory, "bin/glab");
+  const glabManifest = JSON.parse(await readFile(join(glabDirectory, "runtime.json"), "utf8"));
+  assert.equal(glabManifest.architecture, suffix);
+  assert.equal(glabManifest.glabVersion, "1.117.0");
+  assert.equal(glabManifest.executable, "bin/glab");
+  assert.equal(glabManifest.executableSha256, sha256(await readFile(glabBinary)));
+  assert.equal(run("lipo", ["-archs", glabBinary]).trim(), arch === "aarch64" ? "arm64" : "x86_64");
+  run("codesign", ["--verify", "--strict", glabBinary]);
+  if (profile === "notarized") assert.ok(run(glabBinary, ["--version"]).startsWith(`glab ${glabManifest.glabVersion}`));
+  await readFile(join(runtime, "gitlab-cli/LICENSE"));
   await readFile(join(runtime, "codex-engine/LICENSE")); await readFile(join(runtime, "github-cli/LICENSE"));
   await readFile(join(runtime, "notices/THIRD-PARTY-NOTICES.txt"));
   const mainBytes = await readFile(executable);
