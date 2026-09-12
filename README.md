@@ -48,7 +48,7 @@ Start with a prompt, keep the conversation alongside your workspace, and follow 
 
 [![Taskboard Demo conversation showing the updated transcript, a readable Markdown table and the prompt composer.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
 
-*Chat and Kanban were captured in full screen from the beta.2 candidate using the fictional Taskboard Demo. Account identities are removed; task results and activity remain genuine. Click any screenshot to view it at full size.*
+*Chat, Kanban and Subagents use the maintainer's full-screen captures from 12 September 2026, showing the beta.2 candidate and fictional Taskboard Demo at 3024 × 1898. Account identities are removed; task results and activity remain genuine. Click any screenshot to view it at full size.*
 
 ## Feature tour
 
@@ -70,7 +70,7 @@ Turn ideas into cards and follow each task from preparation through execution an
 
 Inspect a delegated task's original instruction, conversation and activity without losing the parent conversation.
 
-[![The subagent inspector showing a submitted task prompt and a genuine review response for Taskboard Demo.](docs/assets/screenshots/subagents.png)](docs/assets/screenshots/subagents.png)
+[![Taskboard Demo's parent conversation beside the completed subagent inspector, showing the original review prompt, command outcomes and findings.](docs/assets/screenshots/subagents.png)](docs/assets/screenshots/subagents.png)
 
 ### Review changes before publishing
 
