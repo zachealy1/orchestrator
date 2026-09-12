@@ -1050,7 +1050,8 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
 .stream-message,
 .run-summary {
-  max-width: 980px;
+  min-width: 0;
+  max-width: min(980px, 100%);
   overflow-wrap: anywhere;
   color: var(--color-text);
   font-size: 1rem;
@@ -1132,6 +1133,8 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
 .markdown-summary {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   white-space: normal;
 }
@@ -1156,6 +1159,7 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 .markdown-summary ul,
 .markdown-summary ol {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   padding-left: 1.4rem;
 }
@@ -1170,6 +1174,77 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
 .historical-summary-plain {
   white-space: pre-wrap;
+}
+
+.markdown-table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  margin-block: 1em;
+}
+
+.markdown-summary > .markdown-table-scroll {
+  margin-block: 0;
+}
+
+.markdown-table-scroll:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.markdown-table {
+  width: fit-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  margin: 0;
+  font-size: 0.875em;
+  text-align: start;
+}
+
+.markdown-table th,
+.markdown-table td {
+  max-width: 30rem;
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.markdown-table th {
+  border-bottom: 1px solid var(--color-divider);
+  padding-block: 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown-table :is(th, td):not([align]) {
+  text-align: start;
+}
+
+.markdown-table [align="left"] {
+  text-align: left;
+}
+
+.markdown-table [align="center"] {
+  text-align: center;
+}
+
+.markdown-table [align="right"] {
+  text-align: right;
+}
+
+.markdown-table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.markdown-table tbody tr:not(:last-child) td {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-divider) 55%, transparent);
 }
 
 .markdown-summary code {

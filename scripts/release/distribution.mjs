@@ -28,6 +28,7 @@ export function packagingConfig(profile, env = process.env) {
     // Tauri also needs this key when validating the generated updater artifact.
     // The native service independently embeds the same public environment value.
     plugins: { updater: { pubkey: env.ORCHESTRATOR_UPDATER_PUBLIC_KEY.trim() } },
+    // Keep DMG presentation in the shared config; Tauri recursively merges this overlay.
     bundle: { createUpdaterArtifacts: true, macOS: {
       signingIdentity: profile === "community" ? "-" : env.APPLE_SIGNING_IDENTITY,
       hardenedRuntime: true,
