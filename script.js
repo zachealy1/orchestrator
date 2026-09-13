@@ -26,7 +26,6 @@
 
   const copyButton = document.querySelector('[data-copy-command]');
   const command = document.getElementById('brew-command');
-  const copyLabel = copyButton.querySelector('.copy-label');
   const copyIcon = copyButton.querySelector('use');
   const copyStatus = document.getElementById('copy-status');
   let copyReset;
@@ -36,9 +35,9 @@
     copyButton.disabled = true;
     try {
       await navigator.clipboard.writeText(command.textContent.trim());
-      copyLabel.textContent = 'Copied';
       copyIcon.setAttribute('href', '#icon-check');
       copyButton.setAttribute('aria-label', 'Homebrew command copied');
+      copyButton.title = 'Homebrew command copied';
       copyStatus.textContent = 'Homebrew command copied to clipboard.';
       copyStatus.classList.add('sr-only');
     } catch {
@@ -52,9 +51,9 @@
     } finally {
       copyButton.disabled = false;
       copyReset = setTimeout(() => {
-        copyLabel.textContent = 'Copy';
         copyIcon.setAttribute('href', '#icon-copy');
         copyButton.setAttribute('aria-label', 'Copy Homebrew install command');
+        copyButton.title = 'Copy Homebrew install command';
       }, 2500);
     }
   });
