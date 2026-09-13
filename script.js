@@ -63,10 +63,12 @@
   const sections = navLinks.map(link => document.querySelector(link.hash));
   function updateNavigation() {
     const mobile = window.matchMedia('(max-width: 800px)').matches;
-    const threshold = mobile ? document.querySelector('.sidebar').getBoundingClientRect().height + 48 : 80;
+    const threshold = mobile
+      ? document.querySelector('.sidebar').getBoundingClientRect().height + 48
+      : Math.max(80, Math.min(400, window.innerHeight * 0.4));
     let current = sections[0];
     sections.forEach(section => {
-      if (section.getBoundingClientRect().top <= threshold) current = section;
+      if (window.scrollY > 16 && section.getBoundingClientRect().top <= threshold) current = section;
     });
     if (window.scrollY > 0 && window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
       current = sections[sections.length - 1];
