@@ -104,7 +104,8 @@ h2, h3, p { overflow-wrap: break-word; }
 .platform { display: flex; gap: 14px; align-items: center; padding: 14px 18px; font-size: 14px; font-weight: 650; }
 .platform .icon { color: #c0deed; }
 .architecture { margin: 0; border-inline: 1px solid var(--divider); padding: 16px 20px; align-self: stretch; display: flex; align-items: center; color: var(--muted); font-size: 13px; }
-.download-row > .button { margin: 7px; width: 44px; height: 44px; padding: 0; }
+.download-row > .button { margin: 7px; width: 44px; height: 44px; padding: 0; border: 0; color: var(--muted); background: transparent; transition: color 140ms ease; }
+.download-row > .button:hover { color: var(--text); }
 .download-row > .button .icon { width: 18px; height: 18px; }
 .download-notes { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; margin-top: 20px; color: var(--muted); font-size: 12px; line-height: 1.8; }
 .download-notes > div + div { border-left: 1px solid var(--divider); padding-left: 20px; }
