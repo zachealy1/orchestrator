@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestrator — VS Code × Codex × Jira, in one free, open-source Mac app</title>
+  <meta name="description" content="A free, open-source Mac workspace for repository browsing, Codex conversations, Kanban tasks, subagent inspection and local code review. Download the public beta for Apple Silicon or Intel.">
+  <meta name="theme-color" content="#0b101a">
+  <link rel="canonical" href="https://zachealy1.github.io/orchestrator/">
+  <link rel="icon" href="assets/icon.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Orchestrator: VS Code × Codex × Jira, in one free, open-source Mac app">
+  <meta property="og:description" content="Your repository, coding agents and Kanban tasks in one free, open-source Mac app. Public beta for macOS 15+; uses your own supported Codex account.">
+  <meta property="og:url" content="https://zachealy1.github.io/orchestrator/">
+  <meta property="og:image" content="https://zachealy1.github.io/orchestrator/assets/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="Orchestrator — VS Code × Codex × Jira, in one free, open-source Mac app">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"SoftwareApplication","name":"Orchestrator","applicationCategory":"DeveloperApplication","operatingSystem":"macOS 15 or later","softwareVersion":"0.2.0-beta.2","url":"https://zachealy1.github.io/orchestrator/","sameAs":"https://github.com/zachealy1/orchestrator","license":"https://github.com/zachealy1/orchestrator/blob/main/LICENSE","image":"https://zachealy1.github.io/orchestrator/assets/social-preview.png","description":"Free, open-source Mac workspace for repository browsing, Codex conversations, Kanban tasks, subagent inspection and local code review. Public beta. Requires your own supported Codex account; provider costs and limits apply.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"Zac Healy","url":"https://github.com/zachealy1"}}
+  </script>
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="header wrap">
+    <a class="brand" href="#" aria-label="Orchestrator home"><img src="assets/icon.png" alt="" width="36" height="36"><span>Orchestrator</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#workflow">Workflow</a>
+      <a href="#questions">Questions</a>
+      <a class="github-link" href="https://github.com/zachealy1/orchestrator">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Free & open source <span class="divider">/</span> Public beta</p>
+      <h1 id="hero-title">VS Code <span class="times">×</span> Codex <span class="times">×</span> Jira.<br><span class="soft">In one free Mac app.</span></h1>
+      <p class="intro">Your repository, coding agents and task board in one workspace.<br class="desktop-break"> Follow the work. Inspect the subagents. Review the actual changes.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#download">Get Orchestrator <span aria-hidden="true">↓</span></a>
+        <a class="button secondary" href="https://github.com/zachealy1/orchestrator">Explore the source <span aria-hidden="true">↗</span></a>
+      </div>
+      <p class="requirements">macOS 15+ · Apple Silicon & Intel · Your own supported Codex account</p>
+    </section>
+
+    <section class="showcase wrap" id="workflow" aria-label="Explore Orchestrator">
+      <div class="gallery-top"><span class="section-label">ONE WORKSPACE. THE WHOLE WORKFLOW.</span><span class="real-captures">Screenshots from the app · click to enlarge</span></div>
+      <div class="tabs" role="tablist" aria-label="Orchestrator screenshots">
+        <button id="tab-tasks" role="tab" type="button" aria-selected="true" aria-controls="panel-tasks" tabindex="0"><span aria-hidden="true">01</span> Tasks</button>
+        <button id="tab-agents" role="tab" type="button" aria-selected="false" aria-controls="panel-agents" tabindex="-1"><span aria-hidden="true">02</span> Subagents</button>
+        <button id="tab-files" role="tab" type="button" aria-selected="false" aria-controls="panel-files" tabindex="-1"><span aria-hidden="true">03</span> Files</button>
+        <button id="tab-review" role="tab" type="button" aria-selected="false" aria-controls="panel-review" tabindex="-1"><span aria-hidden="true">04</span> Review</button>
+      </div>
+      <div class="gallery-frame">
+        <figure id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" tabindex="0">
+          <a href="assets/kanban.png" target="_blank" rel="noopener" aria-label="Open this screenshot at full size"><img src="assets/kanban.png" alt="Orchestrator’s Kanban board with To do, In progress, In review and Done columns" width="3024" height="1898" fetchpriority="high"></a>
+          <figcaption><strong>Give every task a place.</strong> Organise work on a Kanban board and follow its progress.</figcaption>
+        </figure>
+        <figure id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
+          <a href="assets/subagents.png" target="_blank" rel="noopener" aria-label="Open this screenshot at full size"><img src="assets/subagents.png" alt="Orchestrator showing subagent conversations and delegated activity alongside a coding task" width="3024" height="1898" loading="lazy"></a>
+          <figcaption><strong>See what was delegated.</strong> Inspect subagent conversations and activity to understand what happened.</figcaption>
+        </figure>
+        <figure id="panel-files" role="tabpanel" aria-labelledby="tab-files" tabindex="0" hidden>
+          <a href="assets/file-contents.png" target="_blank" rel="noopener" aria-label="Open this screenshot at full size"><img src="assets/file-contents.png" alt="Orchestrator displaying repository files alongside the agent conversation" width="3024" height="1892" loading="lazy"></a>
+          <figcaption><strong>Keep the repository in view.</strong> Browse files alongside the conversation doing the work.</figcaption>
+        </figure>
+        <figure id="panel-review" role="tabpanel" aria-labelledby="tab-review" tabindex="0" hidden>
+          <a href="assets/change-review.png" target="_blank" rel="noopener" aria-label="Open this screenshot at full size"><img src="assets/change-review.png" alt="Orchestrator’s local code review view displaying file changes" width="3024" height="1892" loading="lazy"></a>
+          <figcaption><strong>Review the actual changes.</strong> Inspect the resulting code before you keep or publish it.</figcaption>
+        </figure>
+      </div>
+      <noscript><p class="no-script">Explore all the <a href="https://github.com/zachealy1/orchestrator#feature-tour">screenshots on GitHub</a>.</p></noscript>
+    </section>
+
+    <section class="steps wrap" aria-labelledby="steps-title">
+      <div class="section-heading"><p class="eyebrow">FROM TASK TO REVIEW</p><h2 id="steps-title">Keep the context together.</h2></div>
+      <div class="step-grid">
+        <article><span class="step-number">01 / PLAN</span><h3>Start with a task.</h3><p>Give the work a clear place on your board. Keep the repository close as you decide what needs to change.</p></article>
+        <article><span class="step-number">02 / BUILD</span><h3>Work through it with Codex.</h3><p>Follow the conversation and inspect delegated activity. See the work as it happens, in the same workspace.</p></article>
+        <article><span class="step-number">03 / REVIEW</span><h3>Check what changed.</h3><p>The agent says it’s done. Open the review, inspect the diff and decide what to do with the result.</p></article>
+      </div>
+    </section>
+
+    <section class="download wrap" id="download" aria-labelledby="download-title">
+      <div class="download-copy"><p class="eyebrow">PUBLIC BETA · v0.2.0-beta.2</p><h2 id="download-title">Try it on your next <br>small project.</h2><p>Free to download. MIT licensed.<br>Built for Apple Silicon and Intel Macs.</p><a class="text-link" href="https://github.com/zachealy1/orchestrator/releases">Release notes & all downloads <span aria-hidden="true">↗</span></a></div>
+      <div class="download-options">
+        <a class="download-option" href="https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_aarch64.dmg"><span><strong>Apple Silicon</strong><small>For Macs with an Apple M-series chip</small></span><span class="download-arrow" aria-hidden="true">↓</span></a>
+        <a class="download-option" href="https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_x86_64.dmg"><span><strong>Intel</strong><small>For Macs with an Intel processor</small></span><span class="download-arrow" aria-hidden="true">↓</span></a>
+        <p class="download-requirements">Requires macOS 15+ and your own supported Codex account. Provider costs and limits apply.</p>
+        <p class="beta-note"><strong>First-launch heads-up:</strong> this beta is not yet notarized by Apple, so macOS may show a security warning. Read the <a href="https://github.com/zachealy1/orchestrator/blob/main/docs/public/INSTALLATION.md#community-beta-macos-first-launch-warning">installation guidance</a> before opening it.</p>
+      </div>
+    </section>
+
+    <section class="questions wrap" id="questions" aria-labelledby="questions-title">
+      <div class="section-heading"><p class="eyebrow">A FEW DETAILS</p><h2 id="questions-title">Before you start.</h2></div>
+      <div class="faq-list">
+        <details><summary>What does “VS Code × Codex × Jira” mean?</summary><p>It describes the workflow: browse your repository, work with a coding agent, and organise tasks on a Kanban board. Orchestrator brings those parts together with subagent inspection and local code review.</p></details>
+        <details><summary>Is Orchestrator free?</summary><p>Yes. Orchestrator’s original source is MIT licensed and the app is free to download. You use your own supported Codex account for AI work; the provider’s costs and usage limits apply. Bundled dependencies retain their own licences and notices.</p></details>
+        <details><summary>Do I need to install development tools first?</summary><p>No source build is needed to install the app. Ordinary Chat and repository workflows include a bundled standalone Codex runtime. Some optional integrations have extra setup requirements; the <a href="https://github.com/zachealy1/orchestrator#documentation-and-support">documentation</a> explains them.</p></details>
+        <details><summary>Does it support Claude or local models?</summary><p>Codex is supported today. Claude and local-model support are planned for future versions.</p></details>
+        <details><summary>Where does my data go?</summary><p>The app stores workspace data locally, while AI requests and enabled integrations communicate with their providers. See the <a href="https://github.com/zachealy1/orchestrator/blob/main/docs/public/PRIVACY.md">privacy notes</a> for the details.</p></details>
+        <details><summary>How can I give feedback or contribute?</summary><p>Try a small project and tell us what helps, what gets in the way, or what is missing. <a href="https://github.com/zachealy1/orchestrator/issues">Issues</a> and <a href="https://github.com/zachealy1/orchestrator/pulls">pull requests</a> are welcome. Clear reports about confusing behaviour are useful too.</p></details>
+      </div>
+    </section>
+    <section class="closing wrap"><p>Built in the open.<br><span>Better with your feedback.</span></p><a class="button secondary" href="https://github.com/zachealy1/orchestrator">Explore Orchestrator on GitHub <span aria-hidden="true">↗</span></a></section>
+  </main>
+  <footer class="footer wrap"><span>Orchestrator <span class="footer-by">by <a href="https://github.com/zachealy1">Zac Healy</a></span></span><nav aria-label="Footer navigation"><a href="https://github.com/zachealy1/orchestrator/blob/main/LICENSE">MIT licence</a><a href="https://github.com/zachealy1/orchestrator/blob/main/docs/public/PRIVACY.md">Privacy</a><a href="https://github.com/zachealy1/orchestrator/issues">Feedback</a></nav></footer>
+</body>
+</html>
