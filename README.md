@@ -5,8 +5,8 @@
 <h1 align="center">Orchestrator</h1>
 
 <p align="center">
-  A macOS workspace for AI-assisted development.<br>
-  Plan tasks, work with agents and review changes in one place.
+  <strong>VS Code × Codex × Jira, in one free, open-source Mac app.</strong><br>
+  Repository browsing, Codex conversations, Kanban tasks and local code review.
 </p>
 
 <p align="center">
