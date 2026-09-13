@@ -1,16 +1,16 @@
 # Orchestrator downloads
 
-Updated 2026-09-13T08:16:36.956Z. Previous snapshot: 2026-09-12T12:25:05.537Z.
+Updated 2026-09-13T09:42:01.131Z. Previous snapshot: 2026-09-13T08:16:36.956Z.
 
 Downloads are not unique users, installations or active users. Retries, CI verification and automation count. Asset IDs preserve removed/replaced asset history. Counter decreases are flagged in snapshots and never shown as negative downloads. Underlying GitHub counters are public; this report is public.
 
 | Version | Architecture | Asset | Downloads | Since previous snapshot |
 |---|---|---|---:|---:|
 | v0.2.0-beta.1 | aarch64 | installer | 3 | 0 |
-| v0.2.0-beta.2 | aarch64 | installer | 5 | 5 |
-| v0.2.0-beta.2 | aarch64 | update | 2 | 2 |
-| v0.2.0-beta.2 | x86_64 | installer | 4 | 4 |
-| v0.2.0-beta.2 | x86_64 | update | 2 | 2 |
+| v0.2.0-beta.2 | aarch64 | installer | 5 | 0 |
+| v0.2.0-beta.2 | aarch64 | update | 2 | 0 |
+| v0.2.0-beta.2 | x86_64 | installer | 4 | 0 |
+| v0.2.0-beta.2 | x86_64 | update | 2 | 0 |
 
 [Totals CSV](downloads.csv) · [Daily changes CSV](daily.csv). Daily changes sum observed increases by UTC snapshot date, including publication-day checks; they are not exact download timestamps. Initial lifetime totals are excluded from daily increases. Timestamped snapshots are in snapshots/. No application identifiers or telemetry are collected.
 
