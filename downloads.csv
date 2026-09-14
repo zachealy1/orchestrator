@@ -1,6 +1,6 @@
 version,architecture,kind,downloads,change_since_previous_snapshot
 v0.2.0-beta.1,aarch64,installer,3,0
-v0.2.0-beta.2,aarch64,installer,12,1
+v0.2.0-beta.2,aarch64,installer,12,0
 v0.2.0-beta.2,aarch64,update,2,0
 v0.2.0-beta.2,x86_64,installer,11,0
 v0.2.0-beta.2,x86_64,update,2,0
