@@ -2,7 +2,7 @@
 
 **Collection failed:** GitHub returned invalid clone traffic; previous observations were retained.
 
-Last attempt: 2026-09-15T05:18:23.902Z. Last successful collection: 2026-09-14T16:37:31.956Z.
+Last attempt: 2026-09-15T09:34:27.018Z. Last successful collection: 2026-09-14T16:37:31.956Z.
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
