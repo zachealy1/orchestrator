@@ -28,19 +28,22 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 
 // Only explicitly returned daily rows are observations. Missing dates are not zeroes.
 export function normalizeCloneTraffic(value, timestamp) {
-  // Allow the boundary day: GitHub's documented example includes 15 UTC buckets.
-  const today = dayOf(timestamp), first = shift(today, -14);
+  const today = dayOf(timestamp);
   if (!value || !count(value.count) || !count(value.uniques) || value.uniques > value.count || !Array.isArray(value.clones) || value.clones.length > 15) {
     throw new Error("Invalid clone traffic");
   }
   const seen = new Set();
-  return value.clones.map((row) => {
+  const days = value.clones.map((row) => {
     if (!row || typeof row.timestamp !== "string" || !/^\d{4}-\d{2}-\d{2}T00:00:00(?:\.000)?Z$/.test(row.timestamp)) throw new Error("Invalid clone traffic");
     const day = date(row.timestamp.slice(0, 10));
-    if (day < first || day > today || seen.has(day) || !count(row.count) || !count(row.uniques) || row.uniques > row.count) throw new Error("Invalid clone traffic");
+    if (day > today || seen.has(day) || !count(row.count) || !count(row.uniques) || row.uniques > row.count) throw new Error("Invalid clone traffic");
     seen.add(day);
     return { date: day, clones: row.count, uniqueCloners: row.uniques };
   }).sort((a, b) => a.date.localeCompare(b.date));
+  // GitHub can return a delayed window. Bound its span by the latest returned
+  // date, not the request date, while allowing the documented 15 UTC buckets.
+  if (days.length && days[0].date < shift(days.at(-1).date, -14)) throw new Error("Invalid clone traffic");
+  return days;
 }
 
 export async function collectCloneTraffic({ token, now = new Date().toISOString(), fetcher = fetch } = {}) {
@@ -142,9 +145,14 @@ export function renderCloneReport(history) {
   const dailyCsv = "utc_date,clones,unique_cloners,status,last_observed_at\n" + history.days.map((row) => [row.date, row.clones ?? "", row.uniqueCloners ?? "", cloneDayStatus(row), row.lastObservedAt ?? ""].join(",")).join("\n") + "\n";
   const monthlyCsv = "utc_month,observed_clones,reported_days,missing_days,partial_days\n" + summary.months.map((row) => [row.month, row.observedClones ?? "", row.reportedDays, row.missingDays, row.partialDays].join(",")).join("\n") + "\n";
   const health = history.lastAttempt.status === "failed" ? `**Collection failed:** ${CLONE_ERRORS[history.lastAttempt.error]}` : "Collection succeeded.";
+  const latestDay = history.lastAttempt.days.at(-1)?.date;
+  const freshness = history.lastAttempt.status === "failed" ? "" : latestDay
+    ? `\nLatest UTC date returned by GitHub: **${latestDay}**.\n${latestDay < shift(dayOf(history.updatedAt), -1) ? "**GitHub traffic is delayed.** Saved observations are retained; missing recent dates remain gaps.\n" : ""}`
+    : "\nGitHub returned no daily traffic. Saved observations are retained; missing dates remain gaps.\n";
   const markdown = `# Orchestrator clone history
 
 ${health}
+${freshness}
 
 Last attempt: ${history.updatedAt}. Last successful collection: ${history.lastSuccessfulCollectionAt ?? "none"}.
 Collection began ${history.collectionStartedAt}; retained daily coverage begins ${history.coverageStartedOn}, including the initial available backfill.

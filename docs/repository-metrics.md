@@ -32,6 +32,8 @@ The first successful collection can backfill the available GitHub traffic window
 - **Partial:** the latest observation was made during that same UTC day. It stays partial until GitHub returns a later observation, even if time passes.
 - **Gap:** no daily count has been received. JSON uses `null`, CSV leaves numeric fields blank, and Markdown shows a dash. Omitted days are not inferred from the rolling total.
 
+GitHub can return a delayed traffic window. The collector validates the span between returned dates (up to 15 UTC buckets), rather than rejecting an older boundary date relative to the request time. It retains those dated observations and leaves unreported recent dates as gaps. The report shows the latest UTC date returned by GitHub and flags a delay when it is earlier than yesterday. A successful collection means the response was valid and saved; it does not guarantee that GitHub has reported the latest activity. Future dates, duplicate dates, invalid counts and responses spanning more than 14 days remain rejected.
+
 Monthly and cumulative figures are **observed clone totals for the retained interval**, not guaranteed lifetime totals. Missing and partial days are shown alongside them. A month with no observations has an unavailable total, not zero. The first or current month may cover only part of the calendar month.
 
 Daily **unique cloners are not summed across dates**: the same person can occur on several days. Reports contain no names, emails, device identifiers, cloner identities or application-user telemetry. Clones are repository operations, not installer downloads, installations or active users. All these aggregate reports are public because the metrics branch is public.

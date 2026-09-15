@@ -64,6 +64,43 @@ test("a reported boundary day is retained without inventing an extra missing day
   assert.equal(absent.days.length, 14);
 });
 
+test("a delayed response retains its full window across collection dates", () => {
+  const traffic = response(["2026-08-31", 1, 1], ["2026-09-13", 66, 34]);
+  const expected = normalizeCloneTraffic(traffic, timestamp("2026-09-14"));
+  for (const day of ["2026-09-15", "2026-09-16", "2026-10-01"]) {
+    assert.deepEqual(normalizeCloneTraffic(traffic, timestamp(day)), expected);
+  }
+  const boundary = response(...Array.from({ length: 15 }, (_, i) => [`2026-09-${String(i + 1).padStart(2, "0")}`, 0, 0]));
+  assert.equal(normalizeCloneTraffic(boundary, timestamp("2026-09-20")).length, 15);
+});
+
+test("delayed collection recovers a failed report, preserves history and flags recent gaps", async (t) => {
+  const target = await directory(t);
+  const options = { token: "test-token", fetcher: ok(response(["2026-08-31", 1, 1], ["2026-09-13", 66, 34])) };
+  await writeCloneReport(target, { ...options, now: timestamp("2026-09-14") });
+  await writeCloneReport(target, { token: "", now: timestamp("2026-09-15") });
+  const retryAt = timestamp("2026-09-15", "06");
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: retryAt }), { ok: true, error: null });
+  const saved = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
+  assert.equal(saved.lastSuccessfulCollectionAt, retryAt);
+  assert.equal(row(saved, "2026-08-31").clones, 1);
+  assert.equal(summarizeClones(saved).cumulativeClones, 67);
+  assert.equal(row(saved, "2026-09-14").clones, null);
+  assert.equal(row(saved, "2026-09-15").clones, null);
+  const markdown = await readFile(join(target, "clones/README.md"), "utf8");
+  assert.match(markdown, /Collection succeeded/);
+  assert.match(markdown, /Latest UTC date returned by GitHub: \*\*2026-09-13\*\*/);
+  assert.match(markdown, /GitHub traffic is delayed/);
+  assert.match(await readFile(join(target, "clones/daily.csv"), "utf8"), /2026-09-14,,,gap,/);
+  // A later report must still load the saved delayed attempt and fill gaps.
+  await writeCloneReport(target, { ...options, now: timestamp("2026-09-16"), fetcher: ok(response(["2026-09-14", 4, 2], ["2026-09-15", 0, 0])) });
+  const recovered = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
+  assert.equal(summarizeClones(recovered).cumulativeClones, 71);
+  assert.equal(row(recovered, "2026-09-14").clones, 4);
+  assert.equal(row(recovered, "2026-09-15").clones, 0);
+  assert.doesNotMatch(await readFile(join(target, "clones/README.md"), "utf8"), /GitHub traffic is delayed/);
+});
+
 test("history survives the rolling window, backfills recoverable gaps and keeps expired gaps", () => {
   let history = mergeCloneHistory(null, success("2026-08-31", ["2026-08-30", 7, 2]));
   history = mergeCloneHistory(history, failure("2026-09-20"));
@@ -94,7 +131,8 @@ test("malformed API data is rejected without exposing its contents", async () =>
   const canary = "synthetic-secret-not-real";
   const values = [null, { count: 0, uniques: 0 }, response(["2026-09-07", -1, 0]), response(["2026-09-07", "2", 1]),
     response(["2026-09-07", 1, 2]), response(["2026-09-07", 2, 1], ["2026-09-07", 2, 1]),
-    response(["2026-09-09", 1, 1]), response(["2026-08-20", 1, 1]), response(["2026-02-30", 1, 1]),
+    response(["2026-09-09", 1, 1]), response(["2026-08-20", 1, 1], ["2026-09-07", 1, 1]), response(["2026-02-30", 1, 1]),
+    response(["2026-08-01", -1, 0]), response(...Array.from({ length: 16 }, (_, i) => [`2026-08-${String(i + 1).padStart(2, "0")}`, 0, 0])),
     response(["2026-09-07", Number.MAX_SAFE_INTEGER + 1, 0]), { count: canary, uniques: 1, clones: [] }];
   for (const value of values) {
     const result = await collectCloneTraffic({ token: canary, now: timestamp("2026-09-08"), fetcher: ok(value) });
