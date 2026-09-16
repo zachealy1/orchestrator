@@ -1,3 +1,5 @@
+import { streamRunKey } from "../lib/streamIdentity";
+import type { StreamNotification } from "../features/codex/CodexStreamScheduler";
 import { isDocumentVisible, useDocumentVisible } from "../shared/documentVisibility";
 import { WorkspaceRefreshController } from "../features/workspaces/WorkspaceRefreshController";
 import { createChatTitleActions } from "./chatTitleActions";
@@ -3743,19 +3745,15 @@ function App() {
     void appServices.codexEvents
       .subscribe({
         onNotification: ({ accountId, profileKey, message }) =>
-          handleCodexNotification(accountId, profileKey, message),
+          routeCodexNotification(accountId, profileKey, message),
         onServerRequest: ({
           accountId,
           profileKey,
           message,
           requestToken,
         }) =>
-          handleCodexServerRequest(
-            accountId,
-            profileKey,
-            message,
-            requestToken,
-          ),
+          appServices.codexNotificationFrames.dispatch({ profileKey, message }, () =>
+            handleCodexServerRequest(accountId, profileKey, message, requestToken)),
         onProcess: handleCodexProcessEvent,
         onMalformedEvent: (eventName) => {
           console.error(`Rejected malformed native event: ${eventName}`);
@@ -6111,6 +6109,7 @@ function App() {
     options: { cleanupInteraction?: boolean } = {},
   ) {
     if (activeRunRegistry.get(control.clientId) !== control) return;
+    if (control.threadId) appServices.codexNotificationFrames.reset(streamRunKey(control.profileKey, { params: { threadId: control.threadId } }));
     if (control.runView.status === "completed") {
       setRunInteractionState(control, "completed");
       appServices.runCoordinator.tryTransition(control.clientId, "completing");
@@ -15848,13 +15847,14 @@ function App() {
   }
 
   function flushBatchedCodexNotifications() {
-    const pending = appServices.codexNotificationBatches.drain();
-    if (pending.length === 0) {
-      return runViewRef.current;
-    }
+    applyStreamNotifications(appServices.codexNotificationFrames.drain());
+    return runViewRef.current;
+  }
+
+  function applyStreamNotifications(pending: StreamNotification[]) {
     const messagesByControl = new Map<ActiveRunControl, CodexMessage[]>();
-    pending.forEach(({ profileKey, message }) => {
-      const control = findRunControlForMessage(profileKey, message);
+    pending.forEach(({ profileKey, message, ownerId }) => {
+      const control = ownerId ? activeRunRegistry.get(ownerId) : findRunControlForMessage(profileKey, message);
       if (!control) return;
       const messages = messagesByControl.get(control) ?? [];
       messages.push(message);
@@ -15867,16 +15867,16 @@ function App() {
         { publish: isDocumentVisible() },
       );
     });
-    return runViewRef.current;
   }
 
   function queueBatchedCodexNotification(
     profileKey: CodexProfileKey,
     message: CodexMessage,
+    ownerId: string,
   ) {
-    appServices.codexNotificationBatches.enqueue(
-      { profileKey, message },
-      flushBatchedCodexNotifications,
+    appServices.codexNotificationFrames.enqueue(
+      { profileKey, message, ownerId },
+      applyStreamNotifications,
     );
   }
 
@@ -16654,6 +16654,17 @@ function App() {
     }
   }
 
+  function routeCodexNotification(accountId: number, profileKey: CodexProfileKey, message: CodexMessage) {
+    const control = findRunControlForMessage(profileKey, message);
+    const threadId = readCodexMessageRunIdentity(message).threadId;
+    if (control?.runId && (!threadId || threadId === control.threadId)) {
+      queueBufferedRunEvent(control, "notification", message.method ?? null, message);
+      appServices.codexNotificationFrames.recorded.add(message);
+    }
+    return appServices.codexNotificationFrames.dispatch({ profileKey, message }, () =>
+      handleCodexNotification(accountId, profileKey, message));
+  }
+
   async function handleCodexNotification(
     accountId: number,
     profileKey: CodexProfileKey,
@@ -17092,16 +17103,23 @@ function App() {
     applyInteractionLifecycleNotification(control, method, params);
 
     if (shouldFrameBatchCodexMessage(message)) {
-      queueBufferedRunEvent(control, "notification", method, message);
-      queueBatchedCodexNotification(profileKey, message);
+      if (!appServices.codexNotificationFrames.recorded.has(message)) {
+        queueBufferedRunEvent(control, "notification", method, message);
+      }
+      queueBatchedCodexNotification(profileKey, message, control.clientId);
+      appServices.codexNotificationFrames.applied(message);
       return;
     }
 
-    flushBatchedCodexNotifications();
+    const draining = appServices.codexNotificationFrames.before({ profileKey, message });
+    if (draining) {
+      await draining;
+      if (activeRunRegistry.get(control.clientId) !== control) return;
+    }
 
     let nextRunView = updateRunControlView(control, (current) => {
       let next = applyCodexMessage(current, message);
-      if (intermediateGoalTurnCompleted) {
+      if (intermediateGoalTurnCompleted || (method === "turn/interrupted" && control.acceptsThreadContinuation && goalKeepsRunOpen(control.goal))) {
         next = {
           ...next,
           status: "running",
@@ -17125,6 +17143,7 @@ function App() {
         nextRunView.nativePlan.mode === "plan" &&
         (control.intent === "plan" || control.intent === "plan-revision"),
     );
+    appServices.codexNotificationFrames.applied(message);
     const blockedNoToolError =
       terminalStatus === "completed" &&
       control.kanbanAttempt &&
@@ -17210,7 +17229,8 @@ function App() {
         }
       }
     }
-    await persistRunEvent(control, "notification", method, message);
+    if (appServices.codexNotificationFrames.recorded.has(message)) await flushBufferedRunEvents();
+    else await persistRunEvent(control, "notification", method, message);
 
     if (persistedKanbanStatus) {
       const completedPlan =
