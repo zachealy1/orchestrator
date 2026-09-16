@@ -152,7 +152,8 @@ describe("AnalyticsUsageLimits", () => {
 
     expect(screen.getByRole("heading", { name: "Plan limits" })).toBeInTheDocument();
     expect(screen.getByText(/1,000 of 1,000 credits used/)).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("usage limit has been reached");
+    expect(screen.getByRole("progressbar", { name: "Monthly usage limit: 0% remaining" })).toBeInTheDocument();
+    expect(screen.queryByText("A Codex usage limit has been reached for this account.")).not.toBeInTheDocument();
   });
 
   it("offers an inline retry while retaining stale data", async () => {
