@@ -150,7 +150,7 @@ describe("Application runtime scenarios 5", () => {
       await user.click(await screen.findByRole("option", { name: /app\.tsx/i }));
 
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),

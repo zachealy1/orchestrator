@@ -72,7 +72,7 @@ describe("Application runtime scenarios 1", () => {
         within(primaryNav).queryByRole("button", { name: "Runs" }),
       ).not.toBeInTheDocument();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
       expect(
         within(workspaceNav).getByRole("button", { name: "orchestrator" }),
@@ -88,11 +88,11 @@ describe("Application runtime scenarios 1", () => {
       expect(
         screen.queryByRole("combobox", { name: "Folder" }),
       ).not.toBeInTheDocument();
-      const workspacesHeading = screen.getByText("Workspaces");
+      const filesHeading = screen.getByText("Files");
       const addWorkspaceButton = screen.getByRole("button", {
         name: "Add workspace",
       });
-      expect(workspacesHeading.parentElement).toContainElement(addWorkspaceButton);
+      expect(filesHeading.parentElement).toContainElement(addWorkspaceButton);
       expect(addWorkspaceButton).not.toHaveTextContent("Add workspace");
 
       await user.click(within(primaryNav).getByRole("button", { name: "Analytics" }));
@@ -308,7 +308,7 @@ describe("Application runtime scenarios 1", () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
       const selectedWorkspaceButton = within(workspaceNav).getByRole("button", {
         name: "orchestrator",
@@ -364,7 +364,7 @@ describe("Application runtime scenarios 1", () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
 
       await user.click(
@@ -435,7 +435,7 @@ describe("Application runtime scenarios 1", () => {
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
 
       await waitFor(() =>

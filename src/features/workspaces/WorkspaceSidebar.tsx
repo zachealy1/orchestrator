@@ -473,7 +473,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             ? "Chats"
             : model.mode === "priority"
               ? "Priority"
-              : "Workspaces"}
+              : "Files"}
         </span>
         {model.mode !== "priority" ? (
           <button
