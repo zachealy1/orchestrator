@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -171,13 +173,8 @@ describe("Application multi-repository runtime", () => {
     });
 
     const { user } = await renderApp();
-    const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(
-      within(banner).getByRole("button", { name: /open chat history/i }),
-    );
-    const drawer = await screen.findByRole("complementary", {
-      name: "Workspace chat history",
-    });
+    await openSidebarChats(user);
+    const drawer = sidebarChats();
     const row = within(drawer)
       .getByText("Older app task")
       .closest(".history-run-item");

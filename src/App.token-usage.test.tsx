@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getMocks, prepareDefaults, prepareSignedInRun, renderApp, setWindowWidth,
   workspaceChatFixture, workspaceChatWithRunsFixture, workspaceRunFixture,
-  startMockRun, emitCodexNotification,
+  startMockRun, emitCodexNotification, openSidebarChats, sidebarChats,
 } from "./test/appRuntimeHarness";
 
 const mocks = getMocks();
@@ -31,10 +31,8 @@ describe("resumed run token usage", () => {
     mocks.listWorkspaceChatsMock.mockResolvedValue([chat]);
     mocks.getChatWithRunsMock.mockResolvedValue(workspaceChatWithRunsFixture(chat, [previous]));
     const { user } = await renderApp();
-    const banner = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(within(banner).getByRole("button", { name: /open chat history/i }));
-    const drawer = await screen.findByRole("complementary", { name: "Workspace chat history" });
-    await user.click(within(drawer).getByRole("button", { name: /token recovery/i }));
+    await openSidebarChats(user);
+    await user.click(within(sidebarChats()).getByRole("button", { name: /token recovery/i }));
     await screen.findByText("Done.");
     const goalButton = screen.getByRole("button", { name: /goal mode/i });
     if (goalButton.getAttribute("aria-pressed") === "true") await user.click(goalButton);

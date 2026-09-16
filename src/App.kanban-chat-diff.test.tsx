@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -87,13 +89,8 @@ describe("Kanban chat diff preview", () => {
     });
 
     const { user } = await renderApp();
-    const header = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(
-      within(header).getByRole("button", { name: /open chat history/i }),
-    );
-    const drawer = await screen.findByRole("complementary", {
-      name: "Workspace chat history",
-    });
+    await openSidebarChats(user);
+    const drawer = sidebarChats();
     await user.click(
       within(drawer).getByRole("button", { name: /update game/i }),
     );
@@ -173,13 +170,8 @@ describe("Kanban chat diff preview", () => {
     mocks.loadKanbanGitBindingsMock.mockResolvedValue([binding]);
 
     const { user } = await renderApp();
-    const header = screen.getByRole("region", { name: "Selected folder" });
-    await user.click(
-      within(header).getByRole("button", { name: /open chat history/i }),
-    );
-    const drawer = await screen.findByRole("complementary", {
-      name: "Workspace chat history",
-    });
+    await openSidebarChats(user);
+    const drawer = sidebarChats();
     await user.click(
       within(drawer).getByRole("button", { name: /animate controls/i }),
     );

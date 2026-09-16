@@ -57,6 +57,7 @@ describe("Application runtime scenarios 1", () => {
       mocks.openDialogMock.mockResolvedValue("/repo/new-workspace");
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const primaryNav = screen.getByRole("navigation", {
         name: "Primary",
       });
@@ -71,7 +72,7 @@ describe("Application runtime scenarios 1", () => {
         within(primaryNav).queryByRole("button", { name: "Runs" }),
       ).not.toBeInTheDocument();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
       expect(
         within(workspaceNav).getByRole("button", { name: "orchestrator" }),
@@ -87,11 +88,11 @@ describe("Application runtime scenarios 1", () => {
       expect(
         screen.queryByRole("combobox", { name: "Folder" }),
       ).not.toBeInTheDocument();
-      const workspacesHeading = screen.getByText("Workspaces");
+      const filesHeading = screen.getByText("Files");
       const addWorkspaceButton = screen.getByRole("button", {
         name: "Add workspace",
       });
-      expect(workspacesHeading.parentElement).toContainElement(addWorkspaceButton);
+      expect(filesHeading.parentElement).toContainElement(addWorkspaceButton);
       expect(addWorkspaceButton).not.toHaveTextContent("Add workspace");
 
       await user.click(within(primaryNav).getByRole("button", { name: "Analytics" }));
@@ -140,7 +141,7 @@ describe("Application runtime scenarios 1", () => {
       await user.click(screen.getByRole("button", { name: "Add workspace" }));
 
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       await waitFor(() =>
         expect(
@@ -161,7 +162,7 @@ describe("Application runtime scenarios 1", () => {
   it("opens a workspace context menu and cancels workspace removal", async () => {
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       const workspaceButton = within(workspaceNav).getByRole("button", {
         name: "orchestrator",
@@ -211,7 +212,7 @@ describe("Application runtime scenarios 1", () => {
 
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
 
       await user.click(
@@ -254,7 +255,7 @@ describe("Application runtime scenarios 1", () => {
   it("opens and closes the workspace context menu from the keyboard", async () => {
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       const workspaceButton = within(workspaceNav).getByRole("button", {
         name: "orchestrator",
@@ -305,8 +306,9 @@ describe("Application runtime scenarios 1", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
       const selectedWorkspaceButton = within(workspaceNav).getByRole("button", {
         name: "orchestrator",
@@ -360,8 +362,9 @@ describe("Application runtime scenarios 1", () => {
       mocks.readWorkspaceFilePreviewMock.mockReturnValue(pendingPreview);
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
 
       await user.click(
@@ -430,8 +433,9 @@ describe("Application runtime scenarios 1", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
 
       await waitFor(() =>

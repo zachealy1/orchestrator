@@ -304,10 +304,7 @@ import {
 } from "../lib/historicalTranscriptPreparation";
 import { useConversationLayoutController } from "../features/conversations/useConversationLayoutController";
 import { reconcileChatRepositoriesForWorkspace } from "../features/conversations/chatRepositoryExecution";
-import {
-  HistoryChatLoading,
-  WorkspaceHistoryDrawer,
-} from "../features/conversations/WorkspaceHistoryDrawer";
+import { HistoryChatLoading } from "../features/conversations/HistoryChatLoading";
 import {
   buildPreviousChatContext,
   boundChatContinuationTurns,
@@ -470,6 +467,7 @@ import { WorkspaceContextBanner } from "../features/workspaces/WorkspaceContextB
 import { useWorkspaceController } from "../features/workspaces/useWorkspaceController";
 import { restoreSelectedWorkspace } from "../features/workspaces/selection";
 import { useWorkspacePreviewController } from "../features/workspaces/useWorkspacePreviewController";
+import { useSidebarHistory } from "../features/workspaces/useSidebarHistory";
 import { WorkspaceSidebar } from "../features/workspaces/WorkspaceSidebar";
 import {
   createInteractionSession,
@@ -867,6 +865,8 @@ function App() {
     listRunSubagentInstructions,
     listLocalChatTranscript,
     listWorkspaceChats,
+    listSidebarWorkspaceChats,
+    listPriorityChats,
     readExternalTranscriptSnapshot,
     softDeleteChat,
     upsertRunSubagent,
@@ -1047,7 +1047,6 @@ function App() {
     selectedDraftChatEntryIdRef,
     unreadCompletedChats,
     setUnreadCompletedChats,
-    historyState,
     setHistoryState,
     historyStateRef,
     historyChatLoadState,
@@ -1308,20 +1307,24 @@ function App() {
     activeRunRegistry.getSnapshot,
     activeRunRegistry.getSnapshot,
   );
+  const sidebar = useSidebarHistory({
+    workspaces,
+    expandedFiles: expandedWorkspaceIds,
+    expandedDirectories: expandedDirectoryPaths,
+    listChats: listSidebarWorkspaceChats,
+    listPriority: listPriorityChats,
+    syncWorkspace: syncExternalCodexChats,
+    activityVersion: [...activeRunRegistry.values()].map(control =>
+      [control.clientId, control.chatId, control.runId, control.runView.status, isActiveRunControl(control)].join(":"),
+    ).sort().join("|"),
+  });
   const conversationLayout = useConversationLayoutController();
   const {
-    drawerPhase: historyDrawerPhase,
-    drawerOpen: historyDrawerOpen,
-    drawerSpaceReserved: historyDrawerSpaceReserved,
     inspectorTarget: subagentInspectorTarget,
     inspectorTargetRef: subagentInspectorTargetRef,
     taskViewportWidth,
     taskViewportStable,
     setTaskViewportElement,
-    closeDrawer: closeHistoryDrawer,
-    toggleDrawer: toggleHistoryDrawer,
-    waitForDrawerClosed: waitForHistoryDrawerClosed,
-    handleDrawerTransitionEnd: handleHistoryDrawerTransitionEnd,
     openInspector: openConversationInspector,
     closeInspector: closeSubagentInspector,
     handleTranscriptScrollActivityChange,
@@ -1332,7 +1335,6 @@ function App() {
     resetTranscriptInteraction,
     isTranscriptScrolling,
     isTranscriptViewportStable,
-    getDrawerPhase,
   } = conversationLayout;
   const [, setStatusMessage] = useState("Choose a workspace to begin.");
   const [transcriptLinkError, setTranscriptLinkError] = useState<{
@@ -1858,10 +1860,11 @@ function App() {
         });
     },
   );
-  const selectHistoryChatFromDrawer = useStableEvent((chat: ChatListItem) => {
+  const selectSidebarChat = useStableEvent((chat: ChatListItem) => {
+    setWorkspaceSurfaceMode("chat");
     void selectHistoryChat(chat);
   });
-  const openChatHistoryContextMenuFromDrawer = useStableEvent(
+  const openSidebarChatContextMenu = useStableEvent(
     openChatHistoryContextMenu,
   );
   const changeComposerPrompt = useStableEvent((nextPrompt: string) => {
@@ -2291,9 +2294,12 @@ function App() {
     });
     return activityByChatId;
   })();
-  const selectedWorkspaceUnreadChatCount = selectedWorkspace
-    ? (unreadCompletedChats[selectedWorkspace.id]?.length ?? 0)
-    : 0;
+  const sidebarRunningChatActivity = new Map<number, string>();
+  activeRunRegistry.forEach(control => {
+    if (control.chatId !== null && isActiveRunControl(control)) {
+      sidebarRunningChatActivity.set(control.chatId, control.runView.startedAt ?? new Date().toISOString());
+    }
+  });
   const canRun = Boolean(selectedWorkspace);
   const selectedGitStatusState = selectedWorkspace
     ? gitStatusStates[selectedWorkspace.id] ?? {
@@ -2663,10 +2669,9 @@ function App() {
   useEffect(() => {
     persistWorkspaceSurfaceMode(workspaceSurfaceMode);
     if (workspaceSurfaceMode === "kanban") {
-      closeHistoryDrawer();
       closeWorkspaceFilePreview();
     }
-  }, [closeHistoryDrawer, closeWorkspaceFilePreview, workspaceSurfaceMode]);
+  }, [closeWorkspaceFilePreview, workspaceSurfaceMode]);
   useEffect(() => {
     if (!selectedWorkspace) {
       setKanbanMountedWorkspaceId(null);
@@ -3442,8 +3447,6 @@ function App() {
   const shouldDeferWorkspacePolling = useStableEvent(() =>
     isTranscriptScrolling() ||
     previewResizingRef.current ||
-    getDrawerPhase() === "opening" ||
-    getDrawerPhase() === "closing" ||
     Date.now() - lastForegroundInteractionAtRef.current < BACKGROUND_INTERACTION_GRACE_MS,
   );
 
@@ -3492,28 +3495,6 @@ function App() {
     selectedWorkspace?.id,
     selectedWorkspace?.path,
   ]);
-
-  useEffect(() => {
-    if (!historyDrawerOpen || !selectedWorkspace) {
-      return;
-    }
-
-    void loadWorkspaceRunHistory(selectedWorkspace, {
-      syncExternal: false,
-      showLoading: true,
-    });
-  }, [historyDrawerOpen, selectedWorkspace?.id]);
-
-  useEffect(() => {
-    if (historyDrawerPhase !== "open" || !selectedWorkspace) {
-      return;
-    }
-
-    void loadWorkspaceRunHistory(selectedWorkspace, {
-      syncExternal: true,
-      showLoading: false,
-    });
-  }, [historyDrawerPhase, selectedWorkspace?.id]);
 
   useEffect(() => {
     if (!selectedWorkspace) return;
@@ -3639,11 +3620,7 @@ function App() {
     setSlashCommandSearchError(null);
   }, [selectedAccountId]);
 
-  useEffect(() => {
-    if (!historyDrawerOpen) {
-      setChatHistoryContextMenu(null);
-    }
-  }, [historyDrawerOpen]);
+  useEffect(() => { setChatHistoryContextMenu(null); }, [sidebar.mode]);
 
   useEffect(() => {
     if (
@@ -4235,6 +4212,7 @@ function App() {
     title: string,
     generationState: "complete" | "failed",
   ) {
+    sidebar.updateTitle(chatId, title, generationState);
     setHistoryState((current) => {
       const index = current.chats.findIndex((chat) => chat.id === chatId);
       if (index < 0) return current;
@@ -4571,6 +4549,9 @@ function App() {
         await syncExternalCodexChats(workspace);
       }
       const chats = await listWorkspaceChats(workspaceId);
+      if (workspace) void sidebar.refreshWorkspace(workspace);
+      if (sidebar.mode === "priority") void sidebar.refreshPriority();
+      if (selectedWorkspaceRef.current?.id !== workspaceId) return;
       setHistoryState((current) => {
         const currentById = new Map(current.chats.map((chat) => [chat.id, chat]));
         const mergedChats = chats.map((chat) => {
@@ -4610,7 +4591,7 @@ function App() {
   }
 
   async function refreshSelectedWorkspaceHistory() {
-    if (!selectedWorkspaceRef.current || !historyDrawerOpen) {
+    if (!selectedWorkspaceRef.current) {
       return;
     }
     await loadWorkspaceRunHistory(selectedWorkspaceRef.current);
@@ -7733,6 +7714,8 @@ function App() {
     setChatRenameDialog({ ...dialog, pending: true, error: null });
     try {
       await renameChat(dialog.chat.id, title);
+      sidebar.updateTitle(dialog.chat.id, title, "complete");
+      void sidebar.refreshVisible();
       setHistoryState((current) => ({
         ...current,
         chats: current.chats.map((chat) =>
@@ -7918,6 +7901,7 @@ function App() {
     const chat = chats.find((candidate) => candidate.id === chatId);
     if (!chat) throw new Error("The continuation chat could not be loaded.");
     setHistoryState({ status: "loaded", chats, error: null });
+    void sidebar.refreshVisible();
     await selectHistoryChat(chat, { workspace, positionIntent: "latest" });
   }
 
@@ -8101,12 +8085,10 @@ function App() {
           await updateChat(createdChatId, { status: "error" }).catch(
             () => undefined,
           );
-          if (historyDrawerOpen) {
-            void loadWorkspaceRunHistory(workspace, {
-              syncExternal: false,
-              showLoading: false,
-            });
-          }
+          void loadWorkspaceRunHistory(workspace, {
+            syncExternal: false,
+            showLoading: false,
+          });
         } else {
           await softDeleteChat(createdChatId).catch(() => undefined);
         }
@@ -8688,7 +8670,6 @@ function App() {
         setHistoryOpenRequest(null);
         historicalTranscriptRef.current = null;
         setHistoricalTranscript(null);
-        closeHistoryDrawer();
         if (liveEntry) {
           setTaskChatEntries((current) => {
             const existing = current.filter(
@@ -8746,7 +8727,6 @@ function App() {
       setTaskChatEntries((current) =>
         replaceChatEntries(current, chat.workspace_id, chat.id, []),
       );
-      closeHistoryDrawer();
       setSelectedRunAliases(null);
     });
     selectWorkspaceExecutionAccount(targetWorkspace, session);
@@ -8754,7 +8734,6 @@ function App() {
     setStatusMessage(`Opening chat from ${formatHistoryTimestamp(chat.latest_activity_at)}.`);
     try {
       await waitForNextPaint();
-      await waitForHistoryDrawerClosed();
       markTranscriptViewportUnstable();
       await waitForNextPaint();
       await waitForTranscriptViewportStable();
@@ -9364,6 +9343,7 @@ function App() {
     }
     setChatHistoryDeleteCandidate(null);
     setStatusMessage("Removed chat from history.");
+    void sidebar.refreshVisible();
     await refreshSelectedWorkspaceHistory();
     await refreshAnalyticsForCurrentView(chat.workspace_id);
   }
@@ -9428,6 +9408,7 @@ function App() {
       return normalized === workspaceRoot || normalized.startsWith(workspacePrefix);
     };
 
+    sidebar.setExpandedChats(current => { const next = new Set(current); next.delete(workspace.id); return next; });
     setExpandedWorkspaceIds((current) => {
       const next = new Set(current);
       next.delete(workspace.id);
@@ -16342,7 +16323,6 @@ function App() {
         historicalTranscriptRef.current = null;
         setHistoricalTranscript(null);
       }
-      closeHistoryDrawer();
       setSelectedRunAliases(runningControl);
     });
     if (chatId !== null && chatId !== undefined) {
@@ -16493,7 +16473,6 @@ function App() {
     target: AgentNotificationTarget,
     navigationRequestId: number,
   ): Promise<AgentNotificationNavigationResult> {
-    await waitForHistoryDrawerClosed();
     await waitForNextPaint();
     if (!agentNotificationNavigationIsCurrent(navigationRequestId)) {
       return "retryable";
@@ -17513,6 +17492,7 @@ function App() {
           };
         });
       }
+      void sidebar.refreshVisible();
       if (selectedWorkspaceRef.current?.id === completedControl.workspaceId) {
         await refreshSelectedWorkspaceHistory();
       }
@@ -19154,7 +19134,22 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    if (sidebar.mode !== "files") return;
+    for (const workspace of workspaces) {
+      if (expandedWorkspaceIds.has(workspace.id)) void refreshVisibleWorkspaceDirectories(workspace, true);
+    }
+  }, [sidebar.mode, workspaceLocationsKey]);
+
   function toggleWorkspaceExpanded(workspace: Workspace) {
+    if (sidebar.mode === "chats") {
+      sidebar.setExpandedChats(current => {
+        const next = new Set(current);
+        if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id);
+        return next;
+      });
+      return;
+    }
     const opening = !expandedWorkspaceIds.has(workspace.id);
     setExpandedWorkspaceIds((current) => {
       const next = new Set(current);
@@ -19257,8 +19252,8 @@ function App() {
     );
   }
 
-  async function refreshVisibleWorkspaceDirectories(workspace: Workspace) {
-    if (!expandedWorkspaceIds.has(workspace.id)) {
+  async function refreshVisibleWorkspaceDirectories(workspace: Workspace, showLoading = false) {
+    if (sidebar.mode !== "files" || !expandedWorkspaceIds.has(workspace.id)) {
       return;
     }
 
@@ -19275,7 +19270,8 @@ function App() {
     });
 
     for (const directoryPath of visibleDirectoryPaths) {
-      await refreshWorkspaceDirectoryInBackground(workspace, directoryPath);
+      if (showLoading) await loadWorkspaceDirectory(workspace, directoryPath, true);
+      else await refreshWorkspaceDirectoryInBackground(workspace, directoryPath);
     }
   }
 
@@ -20407,7 +20403,13 @@ function App() {
       }
 
       closeApplicationShortcutOverlays();
-      if (commandId === "new-chat") {
+      if (commandId === "sidebar-chats") {
+        sidebar.setMode("chats");
+      } else if (commandId === "sidebar-files") {
+        sidebar.setMode("files");
+      } else if (commandId === "sidebar-priority") {
+        sidebar.setMode("priority");
+      } else if (commandId === "new-chat") {
         setActiveView("task");
         changeWorkspaceSurfaceMode("chat");
         startNewWorkspaceChat();
@@ -20689,11 +20691,17 @@ function App() {
 
         <WorkspaceSidebar
           model={{
+            mode: sidebar.mode,
+            histories: sidebar.histories,
+            priority: sidebar.priority,
+            selectedChatId: selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null,
+            runningChatActivity: sidebarRunningChatActivity,
+            unreadChats: unreadCompletedChats,
             workspaces,
             selectedWorkspaceId: selectedWorkspace?.id ?? null,
             taskViewActive: activeView === "task",
             runIsActive,
-            expandedWorkspaceIds,
+            expandedWorkspaceIds: sidebar.mode === "chats" ? sidebar.expandedChats : expandedWorkspaceIds,
             expandedDirectoryPaths,
             directoryStates,
             gitStatusByWorkspaceId,
@@ -20703,6 +20711,11 @@ function App() {
             headerDragRegion: selfWindowDragRegion,
           }}
           actions={{
+            setMode: sidebar.setMode,
+            selectChat: selectSidebarChat,
+            openChatContextMenu: openSidebarChatContextMenu,
+            loadChats: (workspace, more) => { void sidebar.refreshWorkspace(workspace, more); },
+            retryPriority: () => { void sidebar.refreshPriority(); },
             addWorkspace: () => void chooseWorkspace(),
             toggleWorkspace: toggleWorkspaceExpanded,
             selectWorkspace,
@@ -20710,6 +20723,7 @@ function App() {
             openWorkspaceContextMenu,
             requestWorkspaceDelete,
             toggleDirectory: toggleDirectoryExpanded,
+            retryDirectory: (workspace, path) => { void loadWorkspaceDirectory(workspace, path, true); },
             startFileDrag: startWorkspaceFilePointerDrag,
             updateFileDrag: updateWorkspaceFilePointerDrag,
             finishFileDrag: finishWorkspaceFilePointerDrag,
@@ -20751,6 +20765,97 @@ function App() {
           }}
         />
       </aside>
+
+              {chatHistoryContextMenu
+                ? createPortal(
+                    <div
+                      className="workspace-context-menu"
+                      ref={chatHistoryContextMenuRef}
+                      role="menu"
+                      aria-label={`${chatHistoryContextMenu.chat.title} chat actions`}
+                      onKeyDown={handleChatHistoryContextMenuKeyDown}
+                      style={{
+                        left: chatHistoryContextMenu.x,
+                        top: chatHistoryContextMenu.y,
+                      }}
+                    >
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          requestChatHistoryRename(chatHistoryContextMenu.chat)
+                        }
+                      >
+                        <Pencil size={15} aria-hidden="true" />
+                        <span>Rename chat</span>
+                      </button>
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          void continueChatInNewChat(chatHistoryContextMenu.chat)
+                        }
+                      >
+                        <MessageSquarePlus size={15} aria-hidden="true" />
+                        <span>Continue in new chat</span>
+                      </button>
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          void requestChatWorktreeContinuation(
+                            chatHistoryContextMenu.chat,
+                          )
+                        }
+                      >
+                        <GitBranchPlus size={15} aria-hidden="true" />
+                        <span>Continue in new worktree</span>
+                      </button>
+                      <button
+                        className="workspace-context-menu-item"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          void continueChatInCodex(chatHistoryContextMenu.chat)
+                        }
+                        disabled={
+                          findRunControlByChat(
+                            chatHistoryContextMenu.chat.workspace_id,
+                            chatHistoryContextMenu.chat.id,
+                          ) !== null
+                        }
+                      >
+                        <Share2 size={15} aria-hidden="true" />
+                        <span>Continue in Codex</span>
+                      </button>
+                      <div
+                        className="workspace-context-menu-separator"
+                        role="separator"
+                      />
+                      <button
+                        className="workspace-context-menu-item danger"
+                        type="button"
+                        role="menuitem"
+                        onClick={() =>
+                          requestChatHistoryDelete(chatHistoryContextMenu.chat)
+                        }
+                        disabled={
+                          findRunControlByChat(
+                            chatHistoryContextMenu.chat.workspace_id,
+                            chatHistoryContextMenu.chat.id,
+                          ) !== null
+                        }
+                      >
+                        <Trash2 size={15} aria-hidden="true" />
+                        <span>Remove chat</span>
+                      </button>
+                    </div>,
+                    document.body,
+                  )
+                : null}
 
       {commandPaletteOpen ? (
         <ApplicationCommandPalette
@@ -20987,9 +21092,6 @@ function App() {
               }
               newChatDisabled={false}
               onNewChat={startNewWorkspaceChat}
-              historyOpen={historyDrawerOpen}
-              historyNotificationCount={selectedWorkspaceUnreadChatCount}
-              onToggleHistory={toggleHistoryDrawer}
               windowDragRegionsEnabled={macOsWindowDragRegionsEnabled}
             />
             {selectedWorkspace &&
@@ -21119,8 +21221,6 @@ function App() {
             ) : null}
             <div
               className={`codex-workspace-body${
-                historyDrawerSpaceReserved ? " history-space-reserved" : ""
-              }${historyDrawerOpen ? " history-open" : ""}${
                 subagentInspectorTarget ? " subagent-inspector-open" : ""
               }`}
               style={
@@ -21128,7 +21228,6 @@ function App() {
                   ? { display: "none" }
                   : undefined
               }
-              data-history-transition-phase={historyDrawerPhase}
             >
               <section
                 className={`task-hero ${hasTaskChat ? "has-chat" : ""}`}
@@ -21319,21 +21418,6 @@ function App() {
                   }}
                 /> : null}
               </section>
-              <WorkspaceHistoryDrawer
-                phase={historyDrawerPhase}
-                workspace={selectedWorkspace}
-                historyState={historyState}
-                selectedChatId={selectedHistoryChatId ?? selectedWorkspaceChatSession?.chatId ?? null}
-                runningChatActivity={selectedWorkspaceRunningChatActivity}
-                unreadChatIds={
-                  selectedWorkspace
-                    ? unreadCompletedChats[selectedWorkspace.id]
-                    : undefined
-                }
-                onSelectChat={selectHistoryChatFromDrawer}
-                onOpenChatContextMenu={openChatHistoryContextMenuFromDrawer}
-                onTransitionEnd={handleHistoryDrawerTransitionEnd}
-              />
               {subagentInspectorTarget ? (
                 <SubagentInspector
                   conversationKey={
@@ -21352,96 +21436,7 @@ function App() {
                   onStop={stopSubagent}
                 />
               ) : null}
-              {chatHistoryContextMenu
-                ? createPortal(
-                    <div
-                      className="workspace-context-menu"
-                      ref={chatHistoryContextMenuRef}
-                      role="menu"
-                      aria-label={`${chatHistoryContextMenu.chat.title} chat actions`}
-                      onKeyDown={handleChatHistoryContextMenuKeyDown}
-                      style={{
-                        left: chatHistoryContextMenu.x,
-                        top: chatHistoryContextMenu.y,
-                      }}
-                    >
-                      <button
-                        className="workspace-context-menu-item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          requestChatHistoryRename(chatHistoryContextMenu.chat)
-                        }
-                      >
-                        <Pencil size={15} aria-hidden="true" />
-                        <span>Rename chat</span>
-                      </button>
-                      <button
-                        className="workspace-context-menu-item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          void continueChatInNewChat(chatHistoryContextMenu.chat)
-                        }
-                      >
-                        <MessageSquarePlus size={15} aria-hidden="true" />
-                        <span>Continue in new chat</span>
-                      </button>
-                      <button
-                        className="workspace-context-menu-item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          void requestChatWorktreeContinuation(
-                            chatHistoryContextMenu.chat,
-                          )
-                        }
-                      >
-                        <GitBranchPlus size={15} aria-hidden="true" />
-                        <span>Continue in new worktree</span>
-                      </button>
-                      <button
-                        className="workspace-context-menu-item"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          void continueChatInCodex(chatHistoryContextMenu.chat)
-                        }
-                        disabled={
-                          findRunControlByChat(
-                            chatHistoryContextMenu.chat.workspace_id,
-                            chatHistoryContextMenu.chat.id,
-                          ) !== null
-                        }
-                      >
-                        <Share2 size={15} aria-hidden="true" />
-                        <span>Continue in Codex</span>
-                      </button>
-                      <div
-                        className="workspace-context-menu-separator"
-                        role="separator"
-                      />
-                      <button
-                        className="workspace-context-menu-item danger"
-                        type="button"
-                        role="menuitem"
-                        onClick={() =>
-                          requestChatHistoryDelete(chatHistoryContextMenu.chat)
-                        }
-                        disabled={
-                          findRunControlByChat(
-                            chatHistoryContextMenu.chat.workspace_id,
-                            chatHistoryContextMenu.chat.id,
-                          ) !== null
-                        }
-                      >
-                        <Trash2 size={15} aria-hidden="true" />
-                        <span>Remove chat</span>
-                      </button>
-                    </div>,
-                    document.body,
-                  )
-                : null}
+
             </div>
             <FilePreviewDrawer
               {...workspacePreview.drawerProps}

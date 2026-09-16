@@ -4,7 +4,6 @@ import {
   GitCommitHorizontal,
   Loader2,
   MessageSquare,
-  PanelRight,
   SquarePen,
 } from "lucide-react";
 import { useRef } from "react";
@@ -53,9 +52,6 @@ export function WorkspaceContextBanner({
   onCreateBranch,
   newChatDisabled,
   onNewChat,
-  historyOpen,
-  historyNotificationCount,
-  onToggleHistory,
   windowDragRegionsEnabled,
 }: {
   workspace: Workspace | null;
@@ -79,9 +75,6 @@ export function WorkspaceContextBanner({
   onCreateBranch?: () => void;
   newChatDisabled: boolean;
   onNewChat: () => void;
-  historyOpen: boolean;
-  historyNotificationCount: number;
-  onToggleHistory: () => void;
   windowDragRegionsEnabled: boolean;
 }) {
   const chatSurfaceButtonRef = useRef<HTMLButtonElement>(null);
@@ -125,15 +118,7 @@ export function WorkspaceContextBanner({
             >
               <SquarePen size={15} />
             </button>
-            <button
-              className="workspace-header-button icon-only history-panel-button"
-              type="button"
-              disabled
-              aria-label="Open chat history"
-              data-tooltip="History"
-            >
-              <PanelRight size={15} />
-            </button>
+
           </div>
         </div>
       </section>
@@ -330,30 +315,7 @@ export function WorkspaceContextBanner({
             >
               <SquarePen size={15} />
             </button>
-            <button
-              className={`workspace-header-button icon-only history-panel-button ${
-                historyOpen ? "active" : ""
-              }`}
-              type="button"
-              onClick={onToggleHistory}
-              aria-label={historyOpen ? "Close chat history" : "Open chat history"}
-              data-tooltip={historyOpen ? "Close history" : "Open history"}
-              aria-pressed={historyOpen}
-            >
-              <PanelRight size={15} />
-              {historyNotificationCount > 0 ? (
-                <span
-                  className="history-notification-badge"
-                  aria-label={`${historyNotificationCount} completed chat${
-                    historyNotificationCount === 1 ? "" : "s"
-                  }`}
-                >
-                  {historyNotificationCount > 9
-                    ? "9+"
-                    : historyNotificationCount}
-                </span>
-              ) : null}
-            </button>
+
           </>
         ) : null}
         </div>
