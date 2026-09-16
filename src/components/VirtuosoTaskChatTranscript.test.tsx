@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { createRef, forwardRef, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyRunView } from "../lib/codexEventReducer";
@@ -1554,7 +1554,7 @@ describe("VirtuosoTaskChatTranscript", () => {
     });
 
     expect(screen.getByText("Which scope?").closest("form")).toBe(questionCard);
-    expect(screen.getByRole("group")).toBeDisabled();
+    expect(within(questionCard!).getByRole("group")).toBeDisabled();
     expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 

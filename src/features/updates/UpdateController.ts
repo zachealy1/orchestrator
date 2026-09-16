@@ -28,11 +28,20 @@ export class UpdateController {
   private inFlight = false;
   private lastCheck: number | null = null;
   private noticed = new Set<string>();
+  private messageRevision = 0;
   constructor(private deps: Dependencies) {
     try { this.noticed = new Set(JSON.parse(deps.storage.getItem(SEEN_KEY) ?? "[]")); } catch { /* optional preference */ }
   }
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  dismissMessage = () => {
+    // Invalidate pending feedback too, without interrupting the update itself.
+    this.messageRevision += 1;
+    if (this.snapshot.message !== null) this.patch({ message: null });
+  };
+  private showMessage(message: string | null, revision: number) {
+    if (revision === this.messageRevision) this.patch({ message });
+  }
   private patch(next: Partial<UpdateView>) {
     this.snapshot = { ...this.snapshot, ...next };
     this.listeners.forEach((listener) => listener());
@@ -47,13 +56,13 @@ export class UpdateController {
       this.deps.notify(state.version);
     }
   };
-  private async openDownloads() {
+  private async openDownloads(messageRevision = this.messageRevision) {
     if (this.snapshot.openingDownloads) return;
     this.patch({ openingDownloads: true, message: null, error: null });
     try {
       await this.deps.openDownloads();
     } catch {
-      this.patch({ message: "Couldn’t open your browser. Try Download latest version again." });
+      this.showMessage("Couldn’t open your browser. Try Download latest version again.", messageRevision);
     } finally {
       this.patch({ openingDownloads: false });
     }
@@ -65,17 +74,18 @@ export class UpdateController {
     if (reason !== "manual" && this.lastCheck !== null && now - this.lastCheck < maxAge) return;
     this.inFlight = true;
     this.lastCheck = now;
+    const messageRevision = this.messageRevision;
     this.patch({ checking: true, message: null });
     try {
       const state = await this.deps.check();
       this.accept(state);
       if (reason === "manual") {
-        if (state.delivery === "manual") await this.openDownloads();
-        else this.patch({ message: state.error ?? (state.version ? null : "Orchestrator is up to date.") });
+        if (state.delivery === "manual") await this.openDownloads(messageRevision);
+        else this.showMessage(state.error ?? (state.version ? null : "Orchestrator is up to date."), messageRevision);
       }
     } catch {
       this.accept({ ...initialUpdateState, delivery: "manual", fallbackReason: "feed-unavailable" });
-      if (reason === "manual") await this.openDownloads();
+      if (reason === "manual") await this.openDownloads(messageRevision);
     } finally { this.inFlight = false; this.patch({ checking: false }); }
   }
   async act() {
@@ -83,6 +93,7 @@ export class UpdateController {
     if (this.snapshot.delivery === "manual") return this.openDownloads();
     if (!this.snapshot.version && this.snapshot.phase !== "download-error") return this.check();
     this.inFlight = true;
+    const messageRevision = this.messageRevision;
     this.patch({ message: null });
     let release: (() => void) | undefined;
     try {
@@ -98,16 +109,19 @@ export class UpdateController {
         release = undefined;
         this.patch({ installing: false });
         this.accept(state);
-        if (state.delivery === "manual") await this.openDownloads();
-        else this.patch({ message: state.error });
+        if (state.delivery === "manual") await this.openDownloads(messageRevision);
+        else this.showMessage(state.error, messageRevision);
       } else {
         this.patch({ phase: "downloading", downloadedBytes: 0, totalBytes: null });
         const state = await this.deps.download();
         this.accept(state);
-        if (state.delivery === "manual") await this.openDownloads();
-        else this.patch({ message: state.error });
+        if (state.delivery === "manual") await this.openDownloads(messageRevision);
+        else this.showMessage(state.error, messageRevision);
       }
-    } catch (error) { this.patch({ message: String(error), error: String(error), ...(this.snapshot.phase === "downloading" ? { phase: "download-error" } : {}) }); }
+    } catch (error) {
+      this.patch({ error: String(error), ...(this.snapshot.phase === "downloading" ? { phase: "download-error" } : {}) });
+      this.showMessage(String(error), messageRevision);
+    }
     finally { release?.(); this.inFlight = false; this.patch({ installing: false }); }
   }
 }

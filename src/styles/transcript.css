@@ -658,26 +658,26 @@ summary.run-live-metrics::-webkit-details-marker {
   color: var(--color-text-secondary);
 }
 
-.run-activity-group summary {
+.run-activity-group > summary {
   display: inline-flex;
   gap: 10px;
   align-items: center;
   cursor: pointer;
   font-size: 0.95rem;
-  line-height: 1.4;
+  line-height: 1.45;
   list-style: none;
 }
 
-.run-activity-group summary::-webkit-details-marker {
+.run-activity-group > summary::-webkit-details-marker {
   display: none;
 }
 
-.run-activity-group summary > svg {
+.run-activity-group > summary > svg {
   color: var(--color-icon-muted);
   transition: transform 140ms ease;
 }
 
-.run-activity-group[open] summary > svg:last-child {
+.run-activity-group[open] > summary > svg:last-child {
   transform: rotate(180deg);
 }
 
@@ -691,6 +691,9 @@ summary.run-live-metrics::-webkit-details-marker {
   display: grid;
   min-width: 0;
   gap: 8px;
+}
+
+.run-activity-group > .run-activity-items {
   margin-top: 10px;
 }
 
@@ -705,6 +708,7 @@ summary.run-live-metrics::-webkit-details-marker {
   line-height: 1.45;
 }
 
+.command-activity-groups,
 .tool-activity-groups {
   display: grid;
   min-width: 0;
@@ -720,9 +724,9 @@ summary.run-live-metrics::-webkit-details-marker {
   gap: 8px;
 }
 
-.tool-activity-row.is-failed,
-.tool-activity-row.is-declined,
-.tool-activity-row.is-interrupted {
+.tool-activity-row.is-failed .tool-activity-icon,
+.tool-activity-row.is-declined .tool-activity-icon,
+.tool-activity-row.is-interrupted .tool-activity-icon {
   color: var(--color-error);
 }
 
@@ -1308,4 +1312,149 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 
 .historical-activity-status.error {
   color: var(--color-error);
+}
+
+.stream-secondary-metrics {
+  color: var(--color-text-secondary);
+  font-size: inherit;
+}
+
+.command-row {
+  display: block;
+}
+
+.command-summary {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-text-secondary);
+}
+
+.command-summary::-webkit-details-marker {
+  display: none;
+}
+
+.command-summary > svg,
+.command-duration {
+  flex-shrink: 0;
+}
+
+.command-summary:hover,
+.command-summary:focus-visible {
+  color: var(--color-text);
+}
+
+.command-summary:focus-visible {
+  outline: 2px solid var(--color-text-secondary);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+
+.command-summary .activity-command-text {
+  min-width: 0;
+  color: inherit;
+}
+
+.command-failure-icon {
+  color: var(--color-error);
+}
+
+.command-duration {
+  color: var(--color-text-muted);
+  font-size: inherit;
+  white-space: nowrap;
+}
+
+.command-chevron {
+  transition: transform 150ms ease;
+}
+
+.command-row[open] > .command-summary .command-chevron {
+  transform: rotate(90deg);
+}
+
+.command-output {
+  min-width: 0;
+  margin: 10px 0 0 22px;
+  overflow: hidden;
+  border: 1px solid var(--color-divider);
+  border-radius: 8px;
+  background: var(--color-component-background);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.command-output pre {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  user-select: text;
+}
+
+.command-output .command-source {
+  border-bottom: 1px solid var(--color-divider);
+  color: var(--color-text-secondary);
+}
+
+.command-output-footer {
+  padding: 8px 14px;
+  border-top: 1px solid var(--color-divider);
+  color: var(--color-text-secondary);
+}
+
+.command-row.is-failed .command-output-footer {
+  color: var(--color-error);
+}
+
+.stream-timeline-item {
+  min-width: 0;
+}
+
+@keyframes stream-content-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes stream-working-shimmer {
+  from { background-position: -100% 0; }
+  to { background-position: 250% 0; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-stream-enter],
+  .stream-trace-content {
+    animation: stream-content-enter 220ms cubic-bezier(.33, 1, .68, 1) both;
+  }
+
+  .stream-working-label {
+    background: var(--color-text-secondary) linear-gradient(
+      90deg, transparent, var(--color-text), transparent
+    ) -100% 0 / 50% 100% no-repeat;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: stream-working-shimmer 2s linear infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-chevron,
+  .run-trace-chevron,
+  .run-activity-group > summary > svg {
+    transition: none;
+  }
+
+  .stream-loading-dots span {
+    animation: none;
+  }
 }

@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react";
+import { StreamingBatcher } from "../shared/StreamingBatcher";
+import { isDocumentVisible, subscribeDocumentVisibility } from "../shared/documentVisibility";
 import type { CodexMessage } from "../features/codex/types";
 
 export type SubagentLifecycleStatus =
@@ -58,6 +60,8 @@ export type SubagentTranscriptItem =
   | {
       id: string;
       kind: "assistant";
+      delivery?: "async";
+      questions?: Array<{ title: string; options?: string[] }>;
       text: string;
       phase: "commentary" | "final_answer" | null;
     }
@@ -170,6 +174,10 @@ export class SubagentStore {
   >();
   readonly #conversationListeners = new Map<string, Set<() => void>>();
   readonly #childThreadIndex = new Map<string, SubagentRecord>();
+  readonly #publishedSnapshots = new Map<string, readonly SubagentRecord[]>();
+  readonly #pendingPublications = new Set<string>();
+  readonly #publicationBatches = new StreamingBatcher<string>();
+  #unsubscribeVisibility: (() => void) | null = null;
 
   replaceConversation(conversationKey: string, records: SubagentRecord[]) {
     const previous =
@@ -191,7 +199,7 @@ export class SubagentStore {
     this.#emitConversation(conversationKey);
   }
 
-  upsert(record: SubagentRecord) {
+  upsert(record: SubagentRecord, { deferPublication = false } = {}) {
     const conversationKey = recordConversationKey(record);
     const current =
       this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS;
@@ -224,7 +232,13 @@ export class SubagentStore {
       recordIndexKey(record.profileKey, record.childThreadId),
       record,
     );
-    this.#emitConversation(conversationKey);
+    if (deferPublication) {
+      this.#pendingPublications.add(conversationKey);
+      this.#unsubscribeVisibility ??= subscribeDocumentVisibility(() => this.#flushPublications());
+      this.#publicationBatches.enqueue(conversationKey, () => this.#flushPublications());
+    } else {
+      this.#emitConversation(conversationKey);
+    }
   }
 
   promoteConversation(ownerClientId: string, chatId: number) {
@@ -265,6 +279,12 @@ export class SubagentStore {
   getConversation(conversationKey: string | null) {
     return conversationKey
       ? this.#conversationSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS
+      : EMPTY_SUBAGENTS;
+  }
+
+  getPublishedConversation(conversationKey: string | null) {
+    return conversationKey
+      ? this.#publishedSnapshots.get(conversationKey) ?? EMPTY_SUBAGENTS
       : EMPTY_SUBAGENTS;
   }
 
@@ -325,11 +345,29 @@ export class SubagentStore {
   }
 
   dispose() {
+    this.#publicationBatches.dispose();
+    this.#unsubscribeVisibility?.();
+    this.#unsubscribeVisibility = null;
     this.clear();
     this.#conversationListeners.clear();
   }
 
+  #flushPublications() {
+    this.#publicationBatches.drain();
+    if (!isDocumentVisible()) return;
+    for (const key of this.#pendingPublications) this.#emitConversation(key);
+  }
+
   #emitConversation(key: string) {
+    this.#pendingPublications.delete(key);
+    if (this.#pendingPublications.size === 0) {
+      this.#publicationBatches.drain();
+      this.#unsubscribeVisibility?.();
+      this.#unsubscribeVisibility = null;
+    }
+    const snapshot = this.#conversationSnapshots.get(key);
+    if (snapshot) this.#publishedSnapshots.set(key, snapshot);
+    else this.#publishedSnapshots.delete(key);
     this.#conversationListeners.get(key)?.forEach((listener) => listener());
   }
 }
@@ -340,7 +378,7 @@ export function useConversationSubagents(
 ) {
   return useSyncExternalStore(
     (listener) => store.subscribe(conversationKey, listener),
-    () => store.getConversation(conversationKey),
+    () => store.getPublishedConversation(conversationKey),
     () => EMPTY_SUBAGENTS,
   );
 }
@@ -420,7 +458,7 @@ export function readSubagentTaskCapture(
     return null;
   }
   const item = readRecord(readRecord(message.params).item);
-  if (item.type !== "agentMessage") return null;
+  if (item.type !== "agentMessage" || item.delivery === "async") return null;
   const itemId = readString(item.id);
   const text = readString(item.text);
   const task = text ? parseSubagentTaskCapture(text) : null;

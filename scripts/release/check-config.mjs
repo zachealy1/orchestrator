@@ -1,9 +1,11 @@
+import { validateAnalyticsConfiguration } from "./analytics-config.mjs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
 import { versionParts } from "./lib.mjs";
 import { engineRelease } from "../codex-engine-package.mjs";
 import { distribution, validateDistributionVersion, requireSigning, requirePublicationApproval } from "./distribution.mjs";
+validateAnalyticsConfiguration();
 const enginePin = JSON.parse(await readFile("src-tauri/resources/codex-engine/release.json", "utf8"));
 for (const arch of ["aarch64", "x86_64"]) engineRelease(enginePin, `${arch}-apple-darwin`);
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));

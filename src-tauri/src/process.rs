@@ -93,6 +93,8 @@ pub(crate) fn codex_app_server_args(isolated_file_store: bool) -> Vec<String> {
         REQUEST_PERMISSIONS_FEATURE.to_string(),
         "--enable".to_string(),
         MULTI_AGENT_V2_FEATURE.to_string(),
+        "--enable".to_string(),
+        "default_mode_request_user_input".to_string(),
         "-c".to_string(),
         format!(
             "features.multi_agent_v2.subagent_usage_hint_text={}",

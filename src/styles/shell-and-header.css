@@ -1783,7 +1783,6 @@ button.account-switcher-item:hover:not(:disabled) {
 .sidebar-mode-selector button:hover:not(:disabled),
 .sidebar-mode-selector button:active:not(:disabled) {
   background: var(--panel-strong);
-  color: var(--color-text);
   transform: none;
 }
 .sidebar-mode-selector button[aria-pressed="true"] {

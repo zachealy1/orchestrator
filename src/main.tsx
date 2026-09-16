@@ -1,3 +1,4 @@
+import { InstallationActivityProvider } from "./features/installationActivity/InstallationActivityProvider";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
@@ -32,7 +33,9 @@ function ApplicationRoot() {
       ) : import.meta.env.VITE_TRANSCRIPT_SCROLL_PROFILE === "1" ? (
         <TranscriptScrollDiagnostics />
       ) : (
-        <App />
+        <InstallationActivityProvider controller={services.installationActivity}>
+          <App />
+        </InstallationActivityProvider>
       )}
       <OrchestratorTooltipLayer />
     </AppServicesProvider>

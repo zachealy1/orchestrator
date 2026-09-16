@@ -393,7 +393,7 @@ describe("Application runtime scenarios 1", () => {
       await renderApp();
 
       await waitFor(() =>
-        expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(workspace.path),
+        expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(workspace.path, true),
       );
     });
 
@@ -444,7 +444,7 @@ describe("Application runtime scenarios 1", () => {
         ),
       );
       expect(
-        within(within(workspaceNav).getByTitle("other")).getByLabelText(
+        await within(within(workspaceNav).getByTitle("other")).findByLabelText(
           "Contains changes",
         ),
       ).toBeInTheDocument();
@@ -871,6 +871,7 @@ describe("Application runtime scenarios 1", () => {
         "placeholder",
         "Commit message (leave blank to generate)...",
       );
+      const gitCallsBeforeCommit = mocks.listWorkspaceGitStatusMock.mock.calls.length;
       await user.type(messageInput, "Update app shell");
       await user.click(within(dialog).getByRole("button", { name: /^commit$/i }));
 
@@ -882,9 +883,10 @@ describe("Application runtime scenarios 1", () => {
           workspace.path,
         ),
       );
-      await waitFor(() =>
-        expect(mocks.listWorkspaceGitStatusMock).toHaveBeenCalledWith(workspace.path),
-      );
+      await waitFor(() => {
+        expect(mocks.listWorkspaceGitStatusMock.mock.calls.length).toBeGreaterThan(gitCallsBeforeCommit);
+        expect(mocks.listWorkspaceGitStatusMock).toHaveBeenLastCalledWith(workspace.path, true);
+      });
     });
 
   it("can commit only staged changes when unstaged changes are excluded", async () => {

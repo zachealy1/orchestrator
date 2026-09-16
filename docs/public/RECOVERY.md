@@ -14,6 +14,12 @@ Check other workspaces, Goals, subagent activity, queued/starting Kanban attempt
 
 The app verifies its pinned engine before selecting it. If provisioning fails, it may continue the session with the previous verified engine and show a warning; that warning means the new engine was **not** activated. Reinstall the correct release and retry. Explicit custom-engine overrides remain authoritative and can cause compatibility errors.
 
+## Git or Kanban target branches are unavailable
+
+Read the Git error shown with the failed branch load. A Git execution failure does not mean the saved repository or target branch is wrong. Older versions can incorrectly report that the repository does not belong to the workspace when Git cannot run.
+
+On macOS, if Git reports an unaccepted Xcode license after an Xcode update, run `sudo xcodebuild -license` in Terminal, review the terms, and accept them if you agree. Verify Git with `git -C /path/to/workspace rev-parse --show-toplevel`. While Kanban is active, failed target-branch loads retry after five seconds; the saved target is retained. Reopening Kanban also retries immediately.
+
 ## Data and recovery
 
 Quit Orchestrator before manually restoring data. Keep the complete application data directory, generated images and relevant worktrees. Do not copy only `app.db` while SQLite is open: recent data may reside in its WAL file. Use a SQLite-aware backup or back up after a clean shutdown.

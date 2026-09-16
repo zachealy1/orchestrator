@@ -147,7 +147,7 @@ fn current_session_keeps_its_selected_engine() {
 fn fake_runtime(manager: &EngineManager, version: &str, compatible: bool) -> RuntimeRecord {
     let probe = manager.root.join(format!("fake-{version}"));
     let features = if compatible {
-        r#"{"data":[{"name":"request_permissions_tool","enabled":true},{"name":"multi_agent_v2","enabled":true}]}"#
+        r#"{"data":[{"name":"request_permissions_tool","enabled":true},{"name":"multi_agent_v2","enabled":true},{"name":"default_mode_request_user_input","enabled":true}]}"#
     } else {
         r#"{"data":[]}"#
     };

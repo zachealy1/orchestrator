@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_seven() {
+fn existing_versions_one_through_twenty_five_upgrade_through_forty_nine() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_seven() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 47);
+        assert_eq!(applied_count, 49);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -1707,4 +1707,102 @@ fn chat_title_generation_uses_supported_approval_configuration() {
         .windows(2)
         .any(|arguments| { arguments[0] == "-m" && arguments[1] == "gpt-5.4" }));
     assert_eq!(args.last().map(String::as_str), Some("-"));
+}
+
+#[test]
+fn restarted_token_counters_repair_history_without_guessing_missing_reports() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open token repair database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..47])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply schema before token repair");
+        sqlx::query(
+            "INSERT INTO workspaces (id, path, label) VALUES (1, '/workspace', 'Workspace')",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+        // Zero, unknown, and positive-but-undercounted totals from restarted
+        // counters; continuing counters; missing baseline; and absent evidence.
+        let cases = [
+            (
+                1,
+                Some(0),
+                Some(0),
+                Some((100, 100, 80, 80)),
+                Some(800),
+                Some(700),
+            ),
+            (
+                2,
+                None,
+                None,
+                Some((100, 100, 80, 80)),
+                Some(800),
+                Some(700),
+            ),
+            (
+                3,
+                Some(300),
+                Some(200),
+                Some((100, 100, 80, 80)),
+                Some(800),
+                Some(700),
+            ),
+            (
+                4,
+                Some(300),
+                Some(300),
+                Some((600, 100, 450, 50)),
+                Some(300),
+                Some(300),
+            ),
+            (
+                5,
+                None,
+                None,
+                Some((600, 100, 450, 50)),
+                Some(300),
+                Some(300),
+            ),
+            (6, None, None, None, None, None),
+        ];
+        for (id, tokens, cached, first, _, _) in cases {
+            sqlx::query("INSERT INTO tasks (id, workspace_id, original_prompt, improved_prompt, route_recommendation, budget_tokens, status) VALUES ($1, 1, 'Task', 'Task', 'direct', 1000, 'completed')")
+                .bind(id).execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO runs (id, task_id, workspace_id, codex_thread_id, status) VALUES ($1, $1, 1, 'thread', 'completed')")
+                .bind(id).execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO token_usage_snapshots (run_id, thread_id, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, run_tokens, run_cached_input_tokens) VALUES ($1, 'thread', 800, 750, 700, 50, 0, $2, $3)")
+                .bind(id).bind(tokens).bind(cached).execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO run_events (run_id, sequence, event_type, method, payload_json) VALUES ($1, 0, 'notification', 'thread/tokenUsage/updated', 'invalid json')")
+                .bind(id).execute(&mut connection).await.unwrap();
+            // A child thread's report must not establish the parent's baseline.
+            sqlx::query("INSERT INTO run_events (run_id, sequence, event_type, method, payload_json) VALUES ($1, 1, 'notification', 'thread/tokenUsage/updated', $2)")
+                .bind(id).bind(json!({"params": {"threadId": "child", "tokenUsage": {"total": {"totalTokens": 1}, "last": {"totalTokens": 1}}}}).to_string())
+                .execute(&mut connection).await.unwrap();
+            if let Some((total, last, cached, last_cached)) = first {
+                let payload = json!({"params": {"threadId": "thread", "tokenUsage": {
+                    "total": {"totalTokens": total, "cachedInputTokens": cached},
+                    "last": {"totalTokens": last, "cachedInputTokens": last_cached}
+                }}})
+                .to_string();
+                sqlx::query("INSERT INTO run_events (run_id, sequence, event_type, method, payload_json) VALUES ($1, 2, 'notification', 'thread/tokenUsage/updated', $2)")
+                    .bind(id).bind(payload).execute(&mut connection).await.unwrap();
+            }
+        }
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("repair token counters");
+        for (id, _, _, _, expected, expected_cached) in cases {
+            let actual: (Option<i64>, Option<i64>) = sqlx::query_as(
+                "SELECT run_tokens, run_cached_input_tokens FROM token_usage_snapshots WHERE run_id = $1"
+            ).bind(id).fetch_one(&mut connection).await.unwrap();
+            assert_eq!(actual, (expected, expected_cached), "run {id}");
+        }
+    });
 }

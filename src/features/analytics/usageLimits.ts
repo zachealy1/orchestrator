@@ -41,10 +41,34 @@ export type CodexRateLimitSnapshot = {
   rateLimitReachedType: CodexRateLimitReachedType | null;
 };
 
+export type CodexRateLimitResetCredit = {
+  id: string;
+  resetType: string;
+  status: string;
+  grantedAt: number | null;
+  expiresAt: number | null;
+  title: string | null;
+  description: string | null;
+};
+
+export type CodexRateLimitResetCredits = {
+  // Detail rows may be omitted or capped; this count is authoritative.
+  availableCount: number;
+  credits: CodexRateLimitResetCredit[] | null;
+};
+
+export type CodexUsageResetOutcome =
+  | "reset"
+  | "alreadyRedeemed"
+  | "nothingToReset"
+  | "noCredit";
+
+export type CodexUsageResetResponse = { outcome: CodexUsageResetOutcome };
+
 export type CodexAccountRateLimitsResponse = {
   rateLimits: CodexRateLimitSnapshot;
   rateLimitsByLimitId: Record<string, CodexRateLimitSnapshot> | null;
-  rateLimitResetCredits: unknown | null;
+  rateLimitResetCredits: CodexRateLimitResetCredits | null;
 };
 
 export type CodexUsageLimitPeriod =
@@ -190,7 +214,7 @@ export function readCodexAccountRateLimitsResponse(
   return {
     rateLimits,
     rateLimitsByLimitId,
-    rateLimitResetCredits: object.rateLimitResetCredits ?? null,
+    rateLimitResetCredits: readCodexRateLimitResetCredits(object.rateLimitResetCredits),
   };
 }
 
@@ -539,4 +563,39 @@ function readRateLimitReachedType(value: unknown) {
 
 function readFiniteNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function readCodexRateLimitResetCredits(
+  value: unknown,
+): CodexRateLimitResetCredits | null {
+  const object = readObject(value);
+  const count = object.availableCount;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
+    return null;
+  const seen = new Set<string>();
+  const credits = Array.isArray(object.credits)
+    ? object.credits.flatMap((value): CodexRateLimitResetCredit[] => {
+        const credit = readObject(value);
+        const id = readString(credit.id);
+        const resetType = readString(credit.resetType);
+        const status = readString(credit.status);
+        if (!id?.trim() || !resetType || !status || seen.has(id)) return [];
+        seen.add(id);
+        return [{
+          id, resetType, status,
+          grantedAt: readResetTimestamp(credit.grantedAt),
+          expiresAt: readResetTimestamp(credit.expiresAt),
+          title: readString(credit.title),
+          description: readString(credit.description),
+        }];
+      })
+    : null;
+  return { availableCount: count, credits };
+}
+
+function readResetTimestamp(value: unknown): number | null {
+  const timestamp = readFiniteNumber(value);
+  return timestamp !== null && Number.isFinite(new Date(timestamp * 1_000).getTime())
+    ? timestamp
+    : null;
 }

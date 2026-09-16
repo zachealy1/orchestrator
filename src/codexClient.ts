@@ -16,7 +16,7 @@ import type {
 } from "./lib/agentNotifications";
 import type { WorkspaceCommitIntentContext } from "./lib/commitMessage";
 import type { ActiveCodexLogin, CodexAccountResponse, CodexConnectResult, CodexLoginResponse, CodexModel, CodexProfileKey, ModelListResponse } from "./features/codex/types";
-import type { CodexAccountRateLimitsResponse } from "./features/analytics/usageLimits";
+import type { CodexAccountRateLimitsResponse, CodexUsageResetResponse } from "./features/analytics/usageLimits";
 import type { DesktopRuntimeStatus } from "./features/interaction/types";
 import type { CodexSkillSummary, DroppedContextPathInspection, ImageAttachmentPreview } from "./features/composer/types";
 import type { ExternalTranscriptSnapshot } from "./features/conversations/types";
@@ -171,6 +171,25 @@ export function readCodexRateLimits(
       );
 }
 
+export async function consumeCodexRateLimitResetCredit(
+  profileKey: CodexProfileKey,
+  accountId: number,
+  idempotencyKey: string,
+  creditId?: string,
+): Promise<CodexUsageResetResponse> {
+  if (!idempotencyKey.trim()) throw new Error("A reset request ID is required.");
+  if (creditId !== undefined && !creditId.trim()) throw new Error("A reset credit ID must not be empty.");
+  const method = "account/rateLimitResetCredit/consume";
+  const params = { idempotencyKey, ...(creditId === undefined ? {} : { creditId }) };
+  const response = profileKey === "default"
+    ? await codexDefaultProfileRpc<CodexUsageResetResponse>(method, params)
+    : await codexRpc<CodexUsageResetResponse>(accountId, method, params);
+  if (!response || !["reset", "alreadyRedeemed", "nothingToReset", "noCredit"].includes(response.outcome)) {
+    throw new Error("Codex returned an invalid usage-reset response.");
+  }
+  return response;
+}
+
 export async function codexDefaultProfileRpc<T>(
   method: string,
   params: unknown = {},
@@ -206,6 +225,7 @@ export function readProjectedSubagentThread(input: {
 }
 
 export type HistoricalTurnActivityResponse = {
+  asyncMessages?: unknown[];
   commands: Array<Omit<RunCommandActivity, "output">>;
   editedFiles: RunEditedFile[];
   toolActivities: RunToolActivity[];
@@ -244,6 +264,7 @@ function projectHistoricalTurnActivityResponse(
   response: Awaited<ReturnType<typeof commands.codexDefaultProfileTurnActivity>>,
 ) {
   return {
+    asyncMessages: response.asyncMessages ?? [],
     commands: response.commands.map((command) => ({
       ...command,
       status: normalizeHistoricalCommandStatus(command.status),

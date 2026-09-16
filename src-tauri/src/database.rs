@@ -7,6 +7,9 @@ pub(crate) struct DatabaseState {
 }
 
 impl DatabaseState {
+    #[cfg(test)]
+    pub(crate) fn from_test_pool(pool: SqlitePool) -> Self { Self { pool } }
+
     pub(crate) async fn connect(app: &AppHandle) -> Result<Self, String> {
         let database_path = app
             .path()
@@ -469,6 +472,9 @@ pub(crate) async fn codex_persisted_run_activity(
             {
                 item_object.insert("durationMs".to_string(), duration);
             }
+        }
+        if let Some(thread_id) = payload.pointer("/params/threadId") {
+            item_object.insert("threadId".to_string(), thread_id.clone());
         }
         item_object.insert("sequence".to_string(), Value::from(sequence));
         items.push(item);

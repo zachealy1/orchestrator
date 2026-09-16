@@ -172,8 +172,17 @@ fn probe_protocol(binary: &Path, home: &Path) -> Result<(), String> {
         "initialize",
         json!({"clientInfo":{"name":"orchestrator_engine_probe","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}),
     )?;
-    let features = request("experimentalFeature/list", json!({"limit":100}))?;
-    for feature in [REQUEST_PERMISSIONS_FEATURE, MULTI_AGENT_V2_FEATURE] {
+    let mut features = json!({"data": []});
+    let mut cursor = Value::Null;
+    loop {
+        let page = request("experimentalFeature/list", json!({"limit":100, "cursor":cursor}))?;
+        if let Some(data) = page.get("data").and_then(Value::as_array) {
+            features["data"].as_array_mut().unwrap().extend(data.iter().cloned());
+        }
+        cursor = page.get("nextCursor").cloned().unwrap_or(Value::Null);
+        if cursor.is_null() { break; }
+    }
+    for feature in [REQUEST_PERMISSIONS_FEATURE, MULTI_AGENT_V2_FEATURE, "default_mode_request_user_input"] {
         if !experimental_feature_is_enabled(&features, feature) {
             return Err(format!("Required feature {feature} is unavailable"));
         }

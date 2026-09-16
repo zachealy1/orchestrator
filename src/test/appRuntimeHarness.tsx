@@ -13,6 +13,7 @@ import type { RunListItem } from "../features/runs/types";
 
 const mocks = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  kanbanLaunchCardOverrides: {} as Record<string, unknown>,
   openDialogMock: vi.fn(),
   openUrlMock: vi.fn(),
   connectCodexMock: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   readActiveCodexLoginMock: vi.fn(),
   readCodexAccountMock: vi.fn(),
   readCodexRateLimitsMock: vi.fn(),
+  consumeCodexRateLimitResetCreditMock: vi.fn(),
   startCodexLoginMock: vi.fn(),
   stopCodexMock: vi.fn(),
   stopDefaultCodexProfileMock: vi.fn(),
@@ -279,7 +281,7 @@ vi.mock("../features/kanban/KanbanWorkspace", async () => {
             type="button"
             onClick={() =>
               run(
-                () => onLaunch(card, "start", card.description),
+                () => onLaunch({ ...card, ...mocks.kanbanLaunchCardOverrides }, "start", card.description),
                 "starting",
                 "started",
               )
@@ -394,6 +396,7 @@ vi.mock("../codexClient", () => ({
   readActiveCodexLogin: mocks.readActiveCodexLoginMock,
   readCodexAccount: mocks.readCodexAccountMock,
   readCodexRateLimits: mocks.readCodexRateLimitsMock,
+  consumeCodexRateLimitResetCredit: mocks.consumeCodexRateLimitResetCreditMock,
   readCodexFile: mocks.readCodexFileMock,
   readDefaultCodexFile: mocks.readDefaultCodexFileMock,
   readWorkspaceFilePreview: mocks.readWorkspaceFilePreviewMock,
@@ -776,6 +779,7 @@ export function updatePromptQueueFixture(
 }
 
 export function prepareDefaults() {
+  mocks.kanbanLaunchCardOverrides = {};
   [
     mocks.createChatMock,
     mocks.createTaskMock,
@@ -785,6 +789,7 @@ export function prepareDefaults() {
     mocks.inspectDroppedContextPathsMock,
     mocks.listCodexModelsMock,
     mocks.readCodexRateLimitsMock,
+    mocks.consumeCodexRateLimitResetCreditMock,
     mocks.listChatSubagentsMock,
     mocks.listRunSubagentInstructionsMock,
     mocks.loadDefaultProfileTurnActivityMock,

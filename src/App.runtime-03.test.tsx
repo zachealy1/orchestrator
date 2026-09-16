@@ -76,8 +76,9 @@ describe("Application runtime scenarios 3", () => {
       await openSidebarChats(user);
       const drawer = sidebarChats();
 
-      expect(within(drawer).getByText(/2 turns/)).toBeInTheDocument();
-      await user.click(within(drawer).getByRole("button", { name: /fix the app header/i }));
+      const chatRow = within(drawer).getByRole("button", { name: /fix the app header/i });
+      expect(chatRow).toHaveAttribute("aria-description", expect.stringContaining("2 turns"));
+      await user.click(chatRow);
 
       const historyLink = await screen.findByRole("link", {
         name: "https://example.com/history",

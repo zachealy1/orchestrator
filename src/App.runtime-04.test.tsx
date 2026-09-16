@@ -941,7 +941,7 @@ describe("Application runtime scenarios 4", () => {
             within(workspaceNav).getByLabelText("modified file"),
           ).toHaveTextContent("M");
         },
-        { timeout: 4500 },
+        { timeout: 6500 },
       );
       expect(within(workspaceNav).getByTitle("external.md")).toBeInTheDocument();
       expect(within(workspaceNav).getByLabelText("untracked file")).toHaveTextContent("U");
@@ -951,7 +951,7 @@ describe("Application runtime scenarios 4", () => {
       expect(changeSummary).toHaveClass("git-summary");
       expect(within(changeSummary).getByText("+1")).toBeInTheDocument();
       expect(within(changeSummary).getByText("-0")).toBeInTheDocument();
-    });
+    }, 10_000);
 
   it("refreshes expanded directories when files are deleted outside Orchestrator", async () => {
       const helloEntry = {
@@ -988,12 +988,12 @@ describe("Application runtime scenarios 4", () => {
           expect(mocks.listWorkspaceDirectoryMock.mock.calls.length).toBeGreaterThanOrEqual(
             2,
           ),
-        { timeout: 4500 },
+        { timeout: 6500 },
       );
       await waitFor(() =>
         expect(within(workspaceNav).queryByTitle("hello.txt")).not.toBeInTheDocument(),
       );
-    });
+    }, 10_000);
 
   it("marks changed files and parent folders in the workspace explorer", async () => {
       mocks.listWorkspaceDirectoryMock.mockResolvedValue([

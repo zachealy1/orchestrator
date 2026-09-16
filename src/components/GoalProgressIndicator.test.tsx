@@ -205,3 +205,23 @@ describe("GoalProgressIndicator", () => {
     expect(description).toHaveAttribute("aria-label", `Goal: ${objective}`);
   });
 });
+
+it("stops the display clock while hidden and catches up from wall time on return", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  let visible = true;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visible ? "visible" : "hidden");
+  const view = render(<GoalProgressIndicator progress={goal()} onPause={vi.fn()} onResume={vi.fn()} onEdit={vi.fn()} onStop={vi.fn()} />);
+  const indicator = screen.getByLabelText("Goal progress");
+  act(() => { visible = false; document.dispatchEvent(new Event("visibilitychange")); });
+  expect(vi.getTimerCount()).toBe(0);
+  act(() => vi.advanceTimersByTime(10_000));
+  expect(indicator).toHaveTextContent("1hr 52m 6s");
+  act(() => { visible = true; document.dispatchEvent(new Event("visibilitychange")); });
+  expect(indicator).toHaveTextContent("1hr 52m 16s");
+  act(() => vi.advanceTimersByTime(1_000));
+  expect(indicator).toHaveTextContent("1hr 52m 17s");
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  visibility.mockRestore();
+});
