@@ -2211,6 +2211,9 @@ function KanbanWorkspace({
       disabled={busy || targetSaving}
       onSave={saveTargetBranch}
       onError={setError}
+      onRecovered={(message) => {
+        setErrorStatus((current) => current?.message === message ? null : current);
+      }}
     />
   ) : null;
 
