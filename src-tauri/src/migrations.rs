@@ -303,6 +303,12 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/049_installation_activity.sql"),
         checksum: 0xf045159cdf767241,
     },
+    MigrationDefinition {
+        version: 50,
+        description: "add_gitlab_review",
+        sql: include_str!("../migrations/050_add_gitlab_review.sql"),
+        checksum: 0x7468bb8435675213,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

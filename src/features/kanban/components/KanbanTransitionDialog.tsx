@@ -72,9 +72,9 @@ const COPY: Record<
     danger: false,
   },
   "complete-without-pr": {
-    title: "Complete without a pull request?",
+    title: "Complete without a review request?",
     description:
-      "No repository changes or commits were found. Completing this card moves it to Done without opening a pull request.",
+      "No repository changes or commits were found. Completing this card moves it to Done without opening a review request.",
     confirm: "Mark Done",
     danger: false,
   },

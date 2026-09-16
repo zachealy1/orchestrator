@@ -1,0 +1,95 @@
+.gitlab-settings-panel .setting-row strong,
+.gitlab-settings-panel .setting-row span {
+  overflow-wrap: anywhere;
+}
+
+.gitlab-connect-form {
+  width: min(480px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  gap: 14px;
+}
+
+.gitlab-connect-heading,
+.gitlab-sign-in-row,
+.gitlab-token-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gitlab-connect-form label,
+.gitlab-sign-in-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  font-size: 0.82rem;
+}
+
+.gitlab-connect-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--color-divider);
+  border-radius: 6px;
+  background: var(--color-background);
+  color: var(--color-text);
+  padding: 8px 10px;
+}
+
+.gitlab-connect-form input:focus,
+.gitlab-connect-form input:focus-visible {
+  border-color: var(--color-divider);
+  outline: none;
+  box-shadow: none;
+}
+
+.gitlab-sign-in-row {
+  border-block: 1px solid var(--color-divider);
+  padding-block: 12px;
+}
+
+.gitlab-sign-in-row strong {
+  font-size: 0.82rem;
+}
+
+.gitlab-sign-in-row span,
+.gitlab-token-help,
+.gitlab-token-actions > span {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.gitlab-settings-panel .gitlab-connection-error,
+.gitlab-connect-form p.gitlab-connection-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.gitlab-settings-panel .gitlab-connection-error {
+  padding: 0 var(--settings-option-padding-inline, 20px) 16px;
+}
+
+.gitlab-connection-spinner {
+  color: var(--color-icon);
+  animation: gitlab-connection-spin 1s linear infinite;
+}
+
+@keyframes gitlab-connection-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gitlab-connection-spinner { animation: none; }
+}
+
+.kanban-local-review-publication-blocker {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 300px;
+}

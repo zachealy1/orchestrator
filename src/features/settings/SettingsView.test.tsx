@@ -906,7 +906,7 @@ describe("SettingsView", () => {
     });
     expect(
       document.querySelectorAll(".settings-detail-header [role='status']"),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
     screen.getAllByRole("status", { name: "Available" }).forEach((status) => {
       expect(status).toHaveClass("positive");
     });

@@ -98,7 +98,7 @@ export function KanbanTargetBranchSelect({
       branches={!loaded && branch && !branches.includes(branch) ? [branch, ...branches] : branches}
       unavailable={loaded && branch !== null && !branches.includes(branch)}
       disabled={disabled || !loaded}
-      tooltip="Base branch for new card branches and their pull requests. Existing card branches keep their target."
+      tooltip="Base branch for new card branches and their review requests. Existing card branches keep their target."
       onOpen={() => {
         void refresh();
       }}

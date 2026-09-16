@@ -553,7 +553,7 @@ describe("KanbanWorkspace controller", () => {
       expect(githubMocks.syncKanbanPullRequests).toHaveBeenCalledTimes(1),
     );
     const refresh = screen.getByRole("button", {
-      name: "Refresh pull request status",
+      name: "Refresh review request status",
     });
     expect(refresh).not.toHaveTextContent("Refresh");
     await user.click(refresh);
@@ -988,6 +988,46 @@ describe("KanbanWorkspace controller", () => {
     );
   });
 
+  it("opens a GitLab merge request with GitLab terminology", async () => {
+    const user = userEvent.setup();
+    const reviewCard = card({
+      reviewChannel: "gitlab",
+      pullRequests: [
+        {
+          provider: "gitlab", host: "code.example",
+          sourceRepositoryPath: "/workspace/repo",
+          relativePath: "repo",
+          owner: "owner",
+          repository: "repo",
+          number: 12,
+          url: "https://code.example/owner/sub/repo/-/merge_requests/12",
+          baseBranch: "main",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "draft",
+          error: null,
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+      ],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([reviewCard]));
+    renderWorkspace();
+
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Open merge request" }),
+    );
+    expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
+      "https://code.example/owner/sub/repo/-/merge_requests/12",
+    );
+  });
+
   it("lets the user choose a repository when a card has multiple pull requests", async () => {
     const user = userEvent.setup();
     const reviewCard = card({
@@ -1049,6 +1089,73 @@ describe("KanbanWorkspace controller", () => {
     );
     expect(
       screen.queryByRole("dialog", { name: "Open pull request" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a mixed-provider chooser with host names and GitLab numbers", async () => {
+    const user = userEvent.setup();
+    const reviewCard = card({
+      reviewChannel: "mixed",
+      pullRequests: [
+        {
+          sourceRepositoryPath: "/workspace/frontend",
+          relativePath: "frontend",
+          owner: "owner",
+          repository: "frontend",
+          number: 21,
+          url: "https://github.com/owner/frontend/pull/21",
+          baseBranch: "main",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "draft",
+          error: null,
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+        {
+          provider: "gitlab", host: "code.example",
+          sourceRepositoryPath: "/workspace/backend",
+          relativePath: "backend",
+          owner: "owner",
+          repository: "backend",
+          number: 34,
+          url: "https://code.example/owner/backend/-/merge_requests/34",
+          baseBranch: "develop",
+          headBranch: "codex/controller-card",
+          draft: true,
+          state: "open",
+          publicationStatus: "draft",
+          error: null,
+          updatedAt: "2026-08-09T12:00:00Z",
+        },
+      ],
+    });
+    apiMocks.loadKanbanBoard.mockResolvedValue(snapshot([reviewCard]));
+    renderWorkspace();
+
+    const tile = await screen.findByRole("article", {
+      name: /Controller card/,
+    });
+    await user.click(
+      within(tile).getByLabelText("Actions for Controller card"),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Open review request" }),
+    );
+
+    const chooser = screen.getByRole("dialog", { name: "Open review request" });
+    expect(within(chooser).getByText(/code.example · !34/)).toBeInTheDocument();
+    const closeChooser = within(chooser).getByRole("button", {
+      name: "Close review request chooser",
+    });
+    expect(closeChooser).toHaveAttribute("data-tooltip", "Close");
+    expect(closeChooser).not.toHaveAttribute("title");
+    await user.click(within(chooser).getByRole("button", { name: /backend/ }));
+    expect(githubMocks.openPullRequest).toHaveBeenCalledWith(
+      "https://code.example/owner/backend/-/merge_requests/34",
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Open review request" }),
     ).not.toBeInTheDocument();
   });
 
