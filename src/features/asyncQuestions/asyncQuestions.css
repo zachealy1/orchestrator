@@ -12,3 +12,9 @@
 .async-question-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
 .async-question-actions > :first-child { margin-right: auto; }
 .async-question-answer-input { margin-top: 12px; min-height: 56px; resize: vertical; }
+.async-question-answer-input:focus,
+.async-question-answer-input:focus-visible {
+  border-color: var(--color-divider);
+  box-shadow: none;
+  outline: none;
+}
