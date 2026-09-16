@@ -1,3 +1,4 @@
+import { asyncMessageFields, asyncReplyFromItem, type AsyncAgentMessage } from "./asyncUserInput";
 import type { StreamActivityEvent, StreamSteerEvent, StreamEvent } from "./streamTypes";
 export type { StreamActivityEvent, StreamSteerEvent, StreamEvent } from "./streamTypes";
 import { updateStreamText } from "./streamTextEvents";
@@ -75,7 +76,7 @@ export type RunGeneratedImage = {
 
 type AgentMessagePhase = "commentary" | "final_answer" | null;
 
-type AgentMessageState = {
+type AgentMessageState = AsyncAgentMessage & {
   completed?: boolean;
   text: string;
   phase: AgentMessagePhase;
@@ -346,6 +347,7 @@ export function applyCodexMessage(
       );
     case "item/started": {
       const item = readObject(params.item);
+      if (asyncReplyFromItem(item)) return recordAsyncReply(state, item);
       if (item.type === "reasoning") {
         if (!item.id && !params.itemId && !Array.isArray(item.summary) && !Array.isArray(item.content)) return appendThinkingEvent(state);
         return upsertReasoningEvent(state, message);
@@ -384,6 +386,7 @@ export function applyCodexMessage(
     }
     case "item/completed": {
       const item = readObject(params.item);
+      if (asyncReplyFromItem(item)) return recordAsyncReply(state, item);
       if (item.type === "reasoning") {
         if (!item.id && !params.itemId && !Array.isArray(item.summary) && !Array.isArray(item.content)) return appendThinkingEvent(state);
         return upsertReasoningEvent(state, message);
@@ -905,11 +908,12 @@ export function updateRunElapsed(
 }
 
 function partialFinalAnswer(state: RunViewState) {
-  return Object.entries(state.agentMessagesById).filter(([id, item]) => id !== state.nativePlan.planItemId && item.phase === "final_answer").map(([, item]) => item)
+  return Object.entries(state.agentMessagesById).filter(([id, item]) => item.delivery !== "async" && id !== state.nativePlan.planItemId && item.phase === "final_answer").map(([, item]) => item)
     .map((item) => item.text).filter(Boolean).join("\n\n");
 }
 
 function upsertMessageEvent(state: RunViewState, params: Record<string, unknown>, itemId: string, text: string, append = false): RunViewState {
+  if (state.agentMessagesById[itemId]?.delivery === "async") return state;
   const identity = streamIdentity({ method: "item/agentMessage/delta", params: { ...params, itemId } });
   return { ...state, streamEvents: updateStreamText(state.streamEvents, identity, "message", text, append) };
 }
@@ -986,13 +990,17 @@ function startAgentMessage(
   };
 
   if (current.completed) return state;
+  const fields = { ...current, ...asyncMessageFields(item) };
   const next: RunViewState = {
     ...state,
     agentMessagesById: {
       ...state.agentMessagesById,
       [itemId]: {
+        ...fields,
+        threadId: readString(params.threadId) ?? state.threadId ?? undefined,
+        turnId: readString(params.turnId) ?? state.turnId ?? undefined,
         text: readString(item.text) ?? current.text,
-        phase: normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase,
+        phase: fields.delivery === "async" ? "commentary" : normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase,
       },
     },
   };
@@ -1009,13 +1017,17 @@ function completeAgentMessage(
     text: "",
     phase: null,
   };
-  const phase = normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase;
+  const fields = { ...current, ...asyncMessageFields(item) };
+  const phase = fields.delivery === "async" ? "commentary" : normalizeAgentMessagePhase(readString(item.phase)) ?? current.phase;
   const text = readString(item.text) ?? current.text;
   const nextState: RunViewState = {
-    ...upsertMessageEvent(state, params, itemId, text),
+    ...(fields.delivery === "async" ? state : upsertMessageEvent(state, params, itemId, text)),
     agentMessagesById: {
       ...state.agentMessagesById,
       [itemId]: {
+        ...fields,
+        threadId: readString(params.threadId) ?? state.threadId ?? undefined,
+        turnId: readString(params.turnId) ?? state.turnId ?? undefined,
         completed: true,
         text,
         phase,
@@ -1056,7 +1068,7 @@ function completeAgentMessage(
     return {
       ...nextState,
       finalMessage: Object.values(nextState.agentMessagesById)
-        .filter((message) => message.phase === "final_answer")
+        .filter((message) => message.delivery !== "async" && message.phase === "final_answer")
         .map((message) => message.text).filter(Boolean).join("\n\n"),
       finalMessageItemId: itemId,
     };
@@ -1772,4 +1784,25 @@ function readNullableNumber(value: unknown) {
 
 function calculateUsageDelta(current: number, baseline: number | null) {
   return baseline === null ? null : Math.max(0, current - baseline);
+}
+
+/** Reconcile a locally accepted steering reply with its native user-message echo. */
+export function recordAsyncReply(state: RunViewState, item: unknown): RunViewState {
+  const reply = asyncReplyFromItem(item);
+  if (!reply) return state;
+  const existing = state.streamEvents.find(event => event.kind === "steer" &&
+    (event.id === `async-reply:${reply.id}` ||
+      ((!reply.clientId || !event.asyncReplyClientId) && event.text === reply.text) ||
+      (reply.clientId && event.asyncReplyClientId === reply.clientId) ||
+      event.asyncReplyServerId === reply.id ||
+      (reply.serverId && event.asyncReplyServerId === reply.serverId)));
+  if (existing && existing.kind === "steer") return { ...state, streamEvents: state.streamEvents.map(event => event !== existing ? event : {
+    ...existing, asyncReplyClientId: existing.asyncReplyClientId ?? reply.clientId,
+    asyncReplyServerId: reply.serverId ?? existing.asyncReplyServerId ?? reply.id,
+  }) };
+  return { ...state, streamEvents: [...state.streamEvents, {
+    id: `async-reply:${reply.id}`, kind: "steer", text: reply.text,
+    timestamp: new Date().toISOString(), contextFiles: [], delivery: "sent",
+    asyncReplyClientId: reply.clientId, asyncReplyServerId: reply.serverId ?? reply.id,
+  }] };
 }

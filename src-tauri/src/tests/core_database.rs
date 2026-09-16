@@ -362,6 +362,7 @@ fn app_server_profiles_enable_network_without_full_access() {
     assert!(shared_args
         .windows(2)
         .any(|args| args == ["--enable", MULTI_AGENT_V2_FEATURE]));
+    assert!(shared_args.windows(2).any(|args| args == ["--enable", "default_mode_request_user_input"]));
     assert!(shared_args.windows(2).any(|args| {
         args[0] == "-c"
             && args[1].starts_with("features.multi_agent_v2.subagent_usage_hint_text=")
@@ -833,4 +834,39 @@ fn main_window_can_start_native_dragging() {
     assert!(permissions
         .iter()
         .any(|permission| permission == "core:window:allow-start-dragging"));
+}
+
+#[test]
+fn async_questions_and_replies_survive_native_history_projection() {
+    let reply_text = format!(
+        "<send_user_message_question_reply>\n{}\n</send_user_message_question_reply>",
+        json!([{"questionItemId":"q-1","question":"Which color?","answer":"Green"}])
+    );
+    let question = json!({"id":"q-1", "type":"agentMessage", "text":"", "delivery":"async",
+        "questions":[{"title":"Which color?", "options":["Blue", "Green"]}]});
+    let reply = json!({"id":"u-2", "type":"userMessage", "clientId":"client-1",
+        "content":[{"type":"text", "text":reply_text}]});
+    let response = project_historical_turn_activity(&json!({"data":[question.clone(), reply.clone()], "nextCursor":null}));
+    assert_eq!(response.async_messages, vec![question.clone(), reply.clone()]);
+    let summary = project_external_transcript_turn(&json!({"id":"turn-1", "status":"completed", "items":[
+        {"type":"userMessage", "content":[{"type":"text", "text":"Build a picker"}]},
+        {"type":"agentMessage", "phase":"final_answer", "text":"Done"}, question.clone(), reply.clone()
+    ]})).unwrap();
+    assert_eq!(summary.final_message, "Done");
+    assert!(summary.prompt.contains("Which color?\nGreen"));
+    assert!(!summary.prompt.contains("send_user_message_question_reply"));
+    let child = project_subagent_item(&question).unwrap();
+    assert_eq!(child["delivery"], "async");
+    assert_eq!(child["questions"][0]["title"], "Which color?");
+    assert_eq!(child["phase"], "commentary");
+    assert_eq!(project_subagent_item(&reply).unwrap()["text"], "Which color?\nGreen");
+}
+
+#[test]
+fn async_question_cannot_become_a_completed_plan_or_final_answer() {
+    let summary = project_external_transcript_turn(&json!({"id":"turn-1", "items":[
+        {"type":"userMessage", "content":[{"type":"text", "text":"Plan this"}]},
+        {"type":"agentMessage", "delivery":"async", "text":"<proposed_plan>Question only</proposed_plan>"}
+    ]})).unwrap();
+    assert!(summary.final_message.is_empty());
 }

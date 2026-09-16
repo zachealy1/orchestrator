@@ -20,6 +20,8 @@ export type StreamSteerEvent = {
   contextFiles: ComposerContextFile[];
   delivery: "pending" | "sent";
   activityIds?: never;
+  asyncReplyClientId?: string | null;
+  asyncReplyServerId?: string | null;
 };
 
 export type StreamEvent = StreamActivityEvent | StreamSteerEvent;

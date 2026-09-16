@@ -1,3 +1,4 @@
+import { AsyncQuestions, SubagentAsyncQuestion } from "../features/asyncQuestions/AsyncQuestions";
 import { ActivityTimeline, ActivityDisclosure, activityStatusLabel } from "./TranscriptActivity";
 import { subagentTimeline } from "../lib/subagentTimeline";
 import { useDocumentVisible } from "../shared/documentVisibility";
@@ -439,6 +440,7 @@ export const SubagentInspector = memo(function SubagentInspector({
         </div>
       ) : null}
 
+      {parentEntry ? <AsyncQuestions entryClientId={parentEntry.clientId} threadId={record.childThreadId} panelOnly /> : null}
       <div className="subagent-inspector-transcript">
         {transcriptState.status === "loading" &&
         !transcriptState.transcript ? (
@@ -459,7 +461,7 @@ export const SubagentInspector = memo(function SubagentInspector({
                   Original prompt unavailable for this older subagent.
                 </p>
               ) : (
-                <SubagentTranscriptTurnView turn={row.turn} />
+                <SubagentTranscriptTurnView turn={row.turn} threadId={record.childThreadId} profileKey={record.profileKey} />
               )
             }
           />
@@ -634,19 +636,23 @@ function filterSubagentInteractions(
 }
 
 const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
-  turn,
+  turn, threadId, profileKey,
 }: {
-  turn: SubagentTranscriptTurn;
+  turn: SubagentTranscriptTurn; threadId: string; profileKey: string;
 }) {
   const userItems = turn.items.filter(
     (item): item is Extract<SubagentTranscriptItem, { kind: "user" }> =>
       item.kind === "user",
   );
+  const questionItems = turn.items.filter(
+    (item): item is Extract<SubagentTranscriptItem, { kind: "assistant" }> =>
+      item.kind === "assistant" && item.delivery === "async",
+  );
   const streamItems = turn.items.filter(
     (item) =>
       item.kind === "activity" ||
       item.kind === "reasoning" ||
-      (item.kind === "assistant" && item.phase === "commentary"),
+      (item.kind === "assistant" && item.delivery !== "async" && item.phase === "commentary"),
   );
   const summaryItems = turn.items.filter(
     (
@@ -656,7 +662,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
       { kind: "assistant" | "plan" }
     > =>
       item.kind === "plan" ||
-      (item.kind === "assistant" && item.phase !== "commentary"),
+      (item.kind === "assistant" && item.delivery !== "async" && item.phase !== "commentary"),
   );
 
   return (
@@ -668,7 +674,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
           </article>
         </div>
       ))}
-      {streamItems.length > 0 || summaryItems.length > 0 ? (
+      {streamItems.length > 0 || summaryItems.length > 0 || questionItems.length > 0 ? (
         <article className="chat-message assistant-message">
           <div
             className={`run-output-surface ${
@@ -682,6 +688,9 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
                 <ActivityTimeline active={isActiveTranscriptTurn(turn.status)} items={subagentTimeline(streamItems)} />
               </ActivityDisclosure>
             ) : null}
+            {questionItems.map((item) => (
+              <SubagentAsyncQuestion key={item.id} itemId={item.id} message={item} threadId={threadId} profileKey={profileKey} />
+            ))}
             {summaryItems.map((item) => (
               <div
                 className="run-summary markdown-summary"

@@ -1,3 +1,6 @@
+import { PendingInteractionNavigator } from "./PendingInteractionNavigator";
+import { AsyncQuestions } from "../features/asyncQuestions/AsyncQuestions";
+import { readableAsyncReply } from "../lib/asyncUserInput";
 import { StreamingMarkdown } from "./StreamingText";
 import { ActivityTimeline, ActivityDisclosure, activityStatusLabel, attentionTimelineItems } from "./TranscriptActivity";
 import { usePreviewableMarkdownComponents } from "./useTranscriptMarkdown";
@@ -5,8 +8,6 @@ import {
   Ban,
   Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   Clock,
   ExternalLink,
@@ -560,6 +561,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
       {!completed && !hasTimeline && !hasPlanPreview && !finalAnswer.trim() ? (
         runView.status === "connecting" ? <PreparingRunStatus /> : <p className="stream-placeholder">Working…</p>
       ) : null}
+      <AsyncQuestions entryClientId={entry.clientId} threadId={runView.threadId} runView={runView} />
       <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
@@ -1167,7 +1169,7 @@ function selectAssistantFinalAnswer(runView: RunViewState, completed: boolean) {
   if (completed) return runView.finalMessage;
 
   const streamingMessages = Object.entries(runView.agentMessagesById)
-    .filter(([id, message]) => id !== runView.nativePlan.planItemId && message.phase === "final_answer" && message.text.trim())
+    .filter(([id, message]) => message.delivery !== "async" && id !== runView.nativePlan.planItemId && message.phase === "final_answer" && message.text.trim())
     .map(([, message]) => message.text);
   return streamingMessages.length > 0
     ? streamingMessages.join("\n\n")
@@ -1389,7 +1391,7 @@ const SteerPrompt = memo(function SteerPrompt({
         aria-busy={pending}
         onCopy={(copyEvent) => writeSubmittedPromptClipboard(copyEvent, event.text, event.contextFiles)}
       >
-        <SubmittedPrompt prompt={event.text} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
+        <SubmittedPrompt prompt={readableAsyncReply(event.text)} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
       </article>
       {pending ? <span className="steer-delivery-status" role="status">Sending…</span> : null}
     </div>
@@ -1769,55 +1771,6 @@ function buildUserInputResponse(
     unansweredQuestionIds,
   };
 }
-
-const PendingInteractionNavigator = memo(function PendingInteractionNavigator({
-  index,
-  total,
-  onPrevious,
-  onNext,
-}: {
-  index: number;
-  total: number;
-  onPrevious: () => void;
-  onNext: () => void;
-}) {
-  if (total <= 1) return null;
-  return (
-    <nav
-      className="pending-interaction-navigator"
-      aria-label="Pending interactions"
-    >
-      <button
-        type="button"
-        className="pending-interaction-nav"
-        aria-label="Previous pending interaction"
-        data-tooltip="Previous"
-        disabled={index === 0}
-        onClick={onPrevious}
-      >
-        <ChevronLeft size={15} aria-hidden="true" />
-      </button>
-      <span
-        className="pending-interaction-count"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {index + 1} of {total}
-      </span>
-      <button
-        type="button"
-        className="pending-interaction-nav"
-        aria-label="Next pending interaction"
-        data-tooltip="Next"
-        disabled={index === total - 1}
-        onClick={onNext}
-      >
-        <ChevronRight size={15} aria-hidden="true" />
-      </button>
-    </nav>
-  );
-});
 
 const UserInputQuestionCard = memo(function UserInputQuestionCard({
   entry,

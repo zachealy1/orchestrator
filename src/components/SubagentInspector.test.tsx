@@ -141,6 +141,33 @@ function renderInspector(
 }
 
 describe("SubagentInspector", () => {
+  it.each([false, true])("keeps async questions visible outside collapsed activity (question-only: %s)", async (questionOnly) => {
+    renderInspector("async-question", (threadId) => {
+      const result = transcript(threadId);
+      result.turns[0].status = "completed";
+      result.turns[0].items = [
+        ...(questionOnly ? [] : result.turns[0].items),
+        {
+          id: "async-question",
+          kind: "assistant",
+          delivery: "async",
+          phase: "commentary",
+          text: "",
+          questions: [{ title: "Which endpoint should I inspect?", options: ["Search", "Settings"] }],
+        },
+      ];
+      return result;
+    });
+    const question = await screen.findByText("Which endpoint should I inspect?");
+    expect(question).toBeVisible();
+    expect(question.closest(".stream-trace")).toBeNull();
+    expect(question.closest(".run-summary")).toBeNull();
+    if (!questionOnly) {
+      expect(screen.getByLabelText("Run trace").closest("details")).not.toHaveAttribute("open");
+      expect(screen.getByText("Inspection complete")).toBeVisible();
+    }
+  });
+
   it("formats tables in both commentary and final replies", async () => {
     renderInspector("tables", (threadId) => {
       const result = transcript(threadId);

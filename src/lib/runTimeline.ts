@@ -1,3 +1,4 @@
+import { parseAsyncReplies } from "./asyncUserInput";
 import { reasoningItemKey } from "./reasoningStream";
 import type {
   RunCommandActivity,
@@ -34,7 +35,7 @@ export function splitTimelineAtSteers(items: TimelineItem[]): TimelineSection[] 
 }
 
 export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
-  const sections = splitTimelineAtSteers(runView.streamEvents.map((event) =>
+  const sections = splitTimelineAtSteers(runView.streamEvents.filter(event => event.kind !== "steer" || !parseAsyncReplies(event.text)).map((event) =>
     event.kind === "steer" ? { kind: "steer", event } : { kind: "event", event },
   ));
   const commandSections = new Map<string, string>();
@@ -131,6 +132,7 @@ export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
 function shouldHideFinalMessageEvent(runView: RunViewState, event: StreamActivityEvent) {
   if (event.kind !== "message") return false;
   const activityIds = event.activityIds ?? [];
+  if (activityIds.some(id => runView.agentMessagesById[id]?.delivery === "async")) return true;
   if (activityIds.some((id) =>
     runView.agentMessagesById[id]?.phase === "final_answer" || id === runView.finalMessageItemId,
   )) return true;
