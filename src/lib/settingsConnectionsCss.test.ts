@@ -409,11 +409,14 @@ describe("settings connection styles", () => {
       ".settings-panel .setting-row",
       ".settings-subsection-heading",
       ".managed-account-row",
+      ".settings-usage-reset-entry",
     ]);
 
     root.walkRules((candidate) => {
-      if (selectors.has(candidate.selector)) {
-        rules.set(candidate.selector, candidate.toString());
+      for (const selector of candidate.selectors) {
+        if (selectors.has(selector)) {
+          rules.set(selector, candidate.toString());
+        }
       }
     });
 
@@ -430,9 +433,11 @@ describe("settings connection styles", () => {
     expect(rules.get(".settings-subsection-heading")).toContain(
       "padding: var(--settings-option-padding-block)\n    var(--settings-option-padding-inline)",
     );
-    expect(rules.get(".managed-account-row")).toContain(
-      "padding: 8px var(--settings-option-padding-inline)",
-    );
+    for (const selector of [".managed-account-row", ".settings-usage-reset-entry"]) {
+      expect(rules.get(selector), selector).toContain(
+        "padding: 8px var(--settings-option-padding-inline)",
+      );
+    }
   });
 
   it("uses one spacing contract for every settings option row", () => {
@@ -451,6 +456,7 @@ describe("settings connection styles", () => {
       ".account-management",
       ".account-management > .muted",
       ".managed-account-row",
+      ".settings-usage-reset-entry",
       ".managed-account-row > .account-mini-avatar",
       ".managed-account-row > div:nth-child(2)",
       ".managed-account-row > .button-row",
@@ -459,14 +465,16 @@ describe("settings connection styles", () => {
     ]);
 
     root.walkRules((candidate) => {
-      if (selectors.has(candidate.selector)) {
-        if (
-          candidate.selector === ".settings-grid" &&
-          !candidate.toString().includes("--settings-option-min-height")
-        ) {
-          return;
+      for (const selector of candidate.selectors) {
+        if (selectors.has(selector)) {
+          if (
+            selector === ".settings-grid" &&
+            !candidate.toString().includes("--settings-option-min-height")
+          ) {
+            continue;
+          }
+          rules.set(selector, candidate.toString());
         }
-        rules.set(candidate.selector, candidate.toString());
       }
     });
 
@@ -494,13 +502,18 @@ describe("settings connection styles", () => {
       );
     }
 
-    expect(rules.get(".managed-account-row")).toContain("min-height: 60px");
-    expect(rules.get(".managed-account-row")).toContain(
-      "gap: var(--settings-option-column-gap)",
-    );
-    expect(rules.get(".managed-account-row")).toContain(
-      "padding: 8px var(--settings-option-padding-inline)",
-    );
+    for (const selector of [".managed-account-row", ".settings-usage-reset-entry"]) {
+      expect(rules.get(selector), selector).toContain("min-height: 60px");
+      expect(rules.get(selector), selector).toContain(
+        "gap: var(--settings-option-column-gap)",
+      );
+      expect(rules.get(selector), selector).toContain(
+        "padding: 8px var(--settings-option-padding-inline)",
+      );
+      expect(rules.get(selector), selector).toContain(
+        "grid-template-columns: 40px minmax(0, 1fr) auto",
+      );
+    }
 
     for (const selector of [
       ".settings-overview-row > div:nth-child(2)",
@@ -542,9 +555,6 @@ describe("settings connection styles", () => {
     );
     expect(rules.get(".managed-account-row input")).toContain(
       "font-size: 0.9rem",
-    );
-    expect(rules.get(".managed-account-row")).toContain(
-      "grid-template-columns: 40px minmax(0, 1fr) auto",
     );
     expect(rules.get(".managed-account-row > .account-mini-avatar")).toContain(
       "width: 40px",
