@@ -229,3 +229,12 @@ describe("Kanban implementation completion", () => {
     ).toBeNull();
   });
 });
+
+it("keeps the Kanban attempt running while native async questions are pending", async () => {
+  const { applyCodexMessage, emptyRunView } = await import("../../lib/codexEventReducer");
+  const view = applyCodexMessage({ ...emptyRunView, status: "running" }, {
+    method: "item/completed", params: { item: { type: "agentMessage", id: "async-q", delivery: "async", text: "Which color?" } },
+  });
+  expect(kanbanStatusAfterFailedStop(view)).toBe("running");
+  expect(view.status).toBe("running");
+});

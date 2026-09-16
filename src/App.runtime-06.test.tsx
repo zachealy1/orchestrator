@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -422,13 +424,8 @@ describe("Application runtime scenarios 6", () => {
       });
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /shared kanban edit/i }),
       );
@@ -516,9 +513,9 @@ describe("Application runtime scenarios 6", () => {
         },
         { accountId: 0, profileKey: "default" },
       );
-      expect(
-        await screen.findByText("Implemented the edited shared prompt."),
-      ).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText("Live run output")).toHaveTextContent(
+        "Implemented the edited shared prompt.",
+      ));
 
       await emitCodexNotification(
         {
@@ -749,13 +746,8 @@ describe("Application runtime scenarios 6", () => {
       mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /persist original settings/i }),
       );
@@ -874,13 +866,8 @@ describe("Application runtime scenarios 6", () => {
       mocks.listLocalChatTranscriptMock.mockResolvedValue([historicalRun]);
 
       const { user } = await renderApp();
-      const banner = screen.getByRole("region", { name: "Selected folder" });
-      await user.click(
-        within(banner).getByRole("button", { name: /open chat history/i }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
       await user.click(
         within(drawer).getByRole("button", { name: /legacy settings/i }),
       );

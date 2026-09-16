@@ -141,7 +141,7 @@ The community release workflow publishes independently signed updater packages a
 - [Report a bug](https://github.com/zachealy1/orchestrator/issues/new/choose) · [Report a vulnerability privately](SECURITY.md)
 - [Contribute](CONTRIBUTING.md) · [Architecture](docs/architecture-decomposition.md) · [Screenshot capture notes](docs/assets/screenshots/README.md)
 
-Orchestrator adds no application-user telemetry. Download reports use GitHub's aggregate asset counters: **downloads are not users or successful installations**. AI tasks and connected integrations still communicate with their providers; see the privacy guide before sharing sensitive work.
+Production releases share minimal daily installation activity with PostHog by default. You can disable this in **Settings → Privacy → Share installation activity**; see the [privacy guide](docs/public/PRIVACY.md) for the exact data collected. Download reports use GitHub's aggregate asset counters: **downloads are not users or successful installations**. AI tasks and connected integrations still communicate with their providers; see the privacy guide before sharing sensitive work.
 
 ## Licence
 

@@ -70,7 +70,7 @@ The merge step rejects a changed main base or candidate head. The signed workflo
 
 The daily and successful-publication workflow reads release-asset counters and writes Markdown, totals CSV, observed daily-change CSV and timestamped snapshots to `download-metrics`. It validates the exact repository name and numeric identity, preserves that branch's history and uses asset IDs to distinguish replaced files. Missing assets retain historical totals; counter decreases are flagged, never rendered as negative new downloads.
 
-Counts mean **downloads**, not users, installations or active users. Verification and retries count. No app identifiers or telemetry are collected. `daily.csv` sums observed increases by UTC snapshot date, not exact event timestamps; initial lifetime totals are excluded. Both reports and GitHub's underlying counters are public.
+Counts mean **downloads**, not users, installations or active users. Verification and retries count. No app identifiers or telemetry are collected by the download report. Production installation activity is configured separately; see [installation activity](installation-activity.md). `daily.csv` sums observed increases by UTC snapshot date, not exact event timestamps; initial lifetime totals are excluded. Both reports and GitHub's underlying counters are public.
 
 ## Recovery and compatibility
 

@@ -141,6 +141,33 @@ function renderInspector(
 }
 
 describe("SubagentInspector", () => {
+  it.each([false, true])("keeps async questions visible outside collapsed activity (question-only: %s)", async (questionOnly) => {
+    renderInspector("async-question", (threadId) => {
+      const result = transcript(threadId);
+      result.turns[0].status = "completed";
+      result.turns[0].items = [
+        ...(questionOnly ? [] : result.turns[0].items),
+        {
+          id: "async-question",
+          kind: "assistant",
+          delivery: "async",
+          phase: "commentary",
+          text: "",
+          questions: [{ title: "Which endpoint should I inspect?", options: ["Search", "Settings"] }],
+        },
+      ];
+      return result;
+    });
+    const question = await screen.findByText("Which endpoint should I inspect?");
+    expect(question).toBeVisible();
+    expect(question.closest(".stream-trace")).toBeNull();
+    expect(question.closest(".run-summary")).toBeNull();
+    if (!questionOnly) {
+      expect(screen.getByLabelText("Run trace").closest("details")).not.toHaveAttribute("open");
+      expect(screen.getByText("Inspection complete")).toBeVisible();
+    }
+  });
+
   it("formats tables in both commentary and final replies", async () => {
     renderInspector("tables", (threadId) => {
       const result = transcript(threadId);
@@ -389,4 +416,22 @@ describe("SubagentInspector", () => {
     ).toHaveClass("stream-message");
     expect(onLoadTranscript).toHaveBeenCalledTimes(2);
   });
+});
+
+it("suspends transcript reads while hidden and reloads the latest revision on return", async () => {
+  const { subagent, onLoadTranscript, services, unmount } = renderInspector("hidden");
+  await screen.findByText("Inspection underway");
+  let visible = true;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visible ? "visible" : "hidden");
+  act(() => { visible = false; document.dispatchEvent(new Event("visibilitychange")); });
+  vi.useFakeTimers();
+  act(() => services.subagents.replaceConversation("chat:hidden", [{ ...subagent, updatedAt: "2026-07-29T10:02:00.000Z" }]));
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  expect(onLoadTranscript).toHaveBeenCalledTimes(1);
+  act(() => { visible = true; document.dispatchEvent(new Event("visibilitychange")); });
+  await act(async () => vi.advanceTimersByTimeAsync(240));
+  expect(onLoadTranscript).toHaveBeenCalledTimes(2);
+  unmount();
+  visibility.mockRestore();
+  vi.useRealTimers();
 });

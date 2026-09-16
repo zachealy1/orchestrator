@@ -743,7 +743,8 @@ describe("Application runtime scenarios 8", () => {
       }));
 
       const { user } = await renderApp();
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      await user.click(screen.getByRole("button", { name: "Files" }));
+      const workspaceNav = screen.getByRole("navigation", { name: "Files" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
       );
@@ -800,7 +801,8 @@ describe("Application runtime scenarios 8", () => {
         .mockResolvedValue([generatedEntry]);
 
       const { user } = await renderApp();
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      await user.click(screen.getByRole("button", { name: "Files" }));
+      const workspaceNav = screen.getByRole("navigation", { name: "Files" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
       );
@@ -916,7 +918,7 @@ describe("Application runtime scenarios 8", () => {
       });
 
       await user.click(
-        within(screen.getByLabelText("Run summary")).getByRole("link", {
+        within(await screen.findByLabelText("Run summary")).getByRole("link", {
           name: "hello-world.txt",
         }),
       );
@@ -971,7 +973,7 @@ describe("Application runtime scenarios 8", () => {
       });
 
       await user.click(
-        within(screen.getByLabelText("Run summary")).getByRole("link", {
+        within(await screen.findByLabelText("Run summary")).getByRole("link", {
           name: "hello-world.txt",
         }),
       );
@@ -1013,8 +1015,9 @@ describe("Application runtime scenarios 8", () => {
         });
 
       const { user } = await renderApp();
+      await user.click(screen.getByRole("button", { name: "Files" }));
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Files",
       });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "Expand orchestrator" }),
@@ -1053,7 +1056,7 @@ describe("Application runtime scenarios 8", () => {
       });
 
       await user.click(
-        within(screen.getByLabelText("Run summary")).getByRole("link", {
+        within(await screen.findByLabelText("Run summary")).getByRole("link", {
           name: "hello-world.txt",
         }),
       );

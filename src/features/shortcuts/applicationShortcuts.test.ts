@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_COMMAND_DEFINITIONS,
+  APPLICATION_SHORTCUT_DEFINITIONS,
   applicationCommandAriaShortcut,
   filterApplicationCommands,
   findApplicationShortcut,
@@ -38,17 +39,49 @@ describe("application shortcuts", () => {
   it.each([
     ["KeyN", "n", "new-chat"],
     ["KeyK", "k", "command-palette"],
-    ["Digit1", "1", "open-chat"],
-    ["Digit2", "2", "open-kanban"],
-    ["Digit3", "3", "open-analytics"],
-    ["Digit4", "4", "open-plugins"],
+    ["Digit1", "1", "sidebar-chats"],
+    ["Digit2", "2", "sidebar-files"],
+    ["Digit3", "3", "sidebar-priority"],
+    ["Digit4", "4", "open-kanban"],
+    ["Digit5", "5", "open-chat"],
+    ["Digit6", "6", "open-analytics"],
+    ["Digit7", "7", "open-plugins"],
     ["Comma", ",", "open-settings"],
     ["Period", ".", "stop-visible-run"],
     ["Slash", "/", "keyboard-shortcuts"],
-  ])("matches Meta+%s on macOS", (code, key, commandId) => {
+  ])("matches %s with the platform modifier", (code, key, commandId) => {
     expect(findApplicationShortcut(keyEvent({ code, key }), "mac")?.id).toBe(
       commandId,
     );
+    expect(findApplicationShortcut(
+      keyEvent({ code, key, metaKey: false, ctrlKey: true }),
+      "other",
+    )?.id).toBe(commandId);
+    expect(findApplicationShortcut(
+      keyEvent({ code: "Unidentified", key }),
+      "mac",
+    )?.id).toBe(commandId);
+  });
+
+  it("assigns each shortcut code and key only once", () => {
+    const shortcuts = APPLICATION_SHORTCUT_DEFINITIONS.map(({ shortcut }) => shortcut);
+    expect(new Set(shortcuts.map(({ code }) => code)).size).toBe(shortcuts.length);
+    expect(new Set(shortcuts.map(({ key }) => key)).size).toBe(shortcuts.length);
+  });
+
+  it.each([
+    ["sidebar-chats", "1"],
+    ["sidebar-files", "2"],
+    ["sidebar-priority", "3"],
+    ["open-kanban", "4"],
+    ["open-chat", "5"],
+    ["open-analytics", "6"],
+    ["open-plugins", "7"],
+  ] as const)("exposes matching hints for %s on both platforms", (id, key) => {
+    expect(formatApplicationCommandShortcut(id, "mac")).toBe(`⌘${key}`);
+    expect(formatApplicationCommandShortcut(id, "other")).toBe(`Ctrl+${key}`);
+    expect(applicationCommandAriaShortcut(id, "mac")).toBe(`Meta+${key}`);
+    expect(applicationCommandAriaShortcut(id, "other")).toBe(`Control+${key}`);
   });
 
   it("supports Control on other platforms and a normalized key fallback", () => {

@@ -47,7 +47,7 @@ function model(
 describe("CodexAccountCard", () => {
   it("offers updates immediately above support when signed in", () => {
     const act = vi.fn();
-    render(<CodexAccountCard model={model({ signedIn: true, menuOpen: true, update: { act, state: {
+    render(<CodexAccountCard model={model({ signedIn: true, menuOpen: true, update: { act, dismissMessage: vi.fn(), state: {
       ...initialUpdateState, phase: "available", version: "0.2.0-beta.2", checking: false, installing: false, message: null,
     } } })} actions={actions()} />);
     const button = screen.getByRole("button", { name: /Download update/ });
@@ -55,7 +55,7 @@ describe("CodexAccountCard", () => {
     expect(button).toHaveClass("account-menu-action"); fireEvent.click(button); expect(act).toHaveBeenCalledOnce();
   });
   it.each([false, true])("shows only sign-in while signed out, including when menuOpen=%s", (menuOpen) => {
-    render(<CodexAccountCard model={model({ signedIn: false, menuOpen, update: { act: vi.fn(), state: {
+    render(<CodexAccountCard model={model({ signedIn: false, menuOpen, update: { act: vi.fn(), dismissMessage: vi.fn(), state: {
       ...initialUpdateState, phase: "available", version: "0.2.0-beta.2", checking: false, installing: false, message: null,
     } } })} actions={actions()} />);
     expect(screen.getAllByRole("button")).toEqual([screen.getByRole("button", { name: "Sign in to Codex" })]);

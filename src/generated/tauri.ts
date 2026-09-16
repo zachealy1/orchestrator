@@ -4,6 +4,9 @@ import { applicationInvoke as __TAURI_INVOKE } from "../shared/nativeCommands";
 
 /** Commands */
 export const commands = {
+	analyticsRecordActivity: () => __TAURI_INVOKE<null>("analytics_record_activity"),
+	analyticsGetPreferences: () => __TAURI_INVOKE<AnalyticsPreferences>("analytics_get_preferences"),
+	analyticsSetEnabled: (enabled: boolean) => __TAURI_INVOKE<AnalyticsPreferences>("analytics_set_enabled", { enabled }),
 	codexEngineStatus: () => __TAURI_INVOKE<CodexEngineStatus>("codex_engine_status"),
 	appUpdateState: () => __TAURI_INVOKE<AppUpdateState>("app_update_state"),
 	appUpdateCheck: () => __TAURI_INVOKE<AppUpdateState>("app_update_check"),
@@ -217,6 +220,11 @@ export type AgentNotificationTarget = {
 	threadId: string | null,
 	turnId: string | null,
 	subagentThreadId: string | null,
+};
+
+export type AnalyticsPreferences = {
+	enabled: boolean,
+	available: boolean,
 };
 
 export type AppUpdateState = {
@@ -443,6 +451,7 @@ export type HistoricalToolActivityDetail = {
 };
 
 export type HistoricalTurnActivityResponse = {
+	asyncMessages: unknown[],
 	commands: HistoricalCommandActivity[],
 	editedFiles: HistoricalEditedFile[],
 	toolActivities: HistoricalToolActivity[],

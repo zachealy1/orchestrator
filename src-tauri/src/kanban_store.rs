@@ -1662,6 +1662,36 @@ async fn rebalance_stage_positions(
     Ok(())
 }
 
+async fn append_card_to_review(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workspace_id: i64,
+    card_id: &str,
+) -> Result<(), String> {
+    let mut positions =
+        ordered_stage_positions(transaction, workspace_id, "in_review", card_id).await?;
+    let next_position = |positions: &[(String, i64)]| {
+        positions
+            .last()
+            .map(|(_, position)| *position)
+            .unwrap_or(0)
+            .checked_add(POSITION_STEP)
+    };
+    if next_position(&positions).is_none() {
+        rebalance_stage_positions(transaction, workspace_id, "in_review").await?;
+        positions =
+            ordered_stage_positions(transaction, workspace_id, "in_review", card_id).await?;
+    }
+    let position = next_position(&positions)
+        .ok_or_else(|| "The card position could not be allocated.".to_string())?;
+    sqlx::query("UPDATE kanban_cards SET sort_position = ?1 WHERE id = ?2")
+        .bind(position)
+        .bind(card_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| format!("The completed card could not be positioned: {error}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn kanban_move_card(
@@ -2287,6 +2317,11 @@ pub async fn kanban_update_attempt(
     if card.rows_affected() != 1 {
         transaction.rollback().await.ok();
         return Err("A stale card attempt was ignored.".to_string());
+    }
+    if review_ready {
+        // Allocate only after accepting this attempt's completion. Replayed or
+        // stale events must not overwrite a subsequent manual card move.
+        append_card_to_review(&mut transaction, workspace_id, &request.card_id).await?;
     }
     if let Some(plan) = request.completed_plan.as_ref() {
         let run_id = request
@@ -3978,6 +4013,181 @@ pub async fn kanban_recover_interrupted(app: AppHandle) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn review_order_database() -> SqliteConnection {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open review order database");
+        sqlx::query(
+            "CREATE TABLE kanban_cards (
+                id TEXT PRIMARY KEY,
+                workspace_id INTEGER NOT NULL DEFAULT 1,
+                stage TEXT NOT NULL DEFAULT 'in_review',
+                sort_position INTEGER NOT NULL,
+                archived_at TEXT,
+                deleted_at TEXT
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("create review cards table");
+        connection
+    }
+
+    async fn review_order(connection: &mut SqliteConnection) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT id, sort_position FROM kanban_cards
+             WHERE workspace_id = 1 AND stage = 'in_review'
+               AND archived_at IS NULL AND deleted_at IS NULL
+             ORDER BY sort_position, id",
+        )
+        .fetch_all(connection)
+        .await
+        .expect("load persisted review order")
+    }
+
+    #[test]
+    fn review_completions_append_in_acceptance_order_and_allow_manual_overrides() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = review_order_database().await;
+            sqlx::query(
+                "INSERT INTO kanban_cards (id, sort_position, stage) VALUES
+                    ('existing-b', 1024, 'in_review'),
+                    ('existing-a', 2048, 'in_review'),
+                    ('created-first', 1024, 'in_progress'),
+                    ('created-second', 2048, 'in_progress')",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed review and running cards");
+
+            // Finish in reverse creation order, as the attempt handler does.
+            for card_id in ["created-second", "created-first"] {
+                let mut transaction = connection.begin().await.expect("begin completion");
+                sqlx::query("UPDATE kanban_cards SET stage = 'in_review' WHERE id = ?1")
+                    .bind(card_id)
+                    .execute(&mut *transaction)
+                    .await
+                    .expect("enter review");
+                append_card_to_review(&mut transaction, 1, card_id)
+                    .await
+                    .expect("append completed card");
+                transaction.commit().await.expect("commit completion");
+            }
+            assert_eq!(
+                review_order(&mut connection).await,
+                vec![
+                    ("existing-b".into(), 1024),
+                    ("existing-a".into(), 2048),
+                    ("created-second".into(), 3072),
+                    ("created-first".into(), 4096),
+                ]
+            );
+
+            // A persisted drag override survives reloads and later completions.
+            sqlx::query("UPDATE kanban_cards SET sort_position = 0 WHERE id = 'created-first'")
+                .execute(&mut connection)
+                .await
+                .expect("persist manual reorder");
+            assert_eq!(review_order(&mut connection).await[0].0, "created-first");
+
+            // A subsequent run on a previously reviewed card returns it to the bottom.
+            let mut transaction = connection
+                .begin()
+                .await
+                .expect("begin subsequent completion");
+            append_card_to_review(&mut transaction, 1, "existing-b")
+                .await
+                .expect("append subsequent completion");
+            transaction
+                .commit()
+                .await
+                .expect("commit subsequent completion");
+            assert_eq!(
+                review_order(&mut connection).await,
+                vec![
+                    ("created-first".into(), 0),
+                    ("existing-a".into(), 2048),
+                    ("created-second".into(), 3072),
+                    ("existing-b".into(), 4096),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn review_append_ignores_other_workspaces_hidden_cards_and_itself() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = review_order_database().await;
+            sqlx::query(
+                "INSERT INTO kanban_cards (
+                    id, workspace_id, stage, sort_position, archived_at, deleted_at
+                 ) VALUES
+                    ('completing', 1, 'in_review', 8192, NULL, NULL),
+                    ('other-workspace', 2, 'in_review', 16384, NULL, NULL),
+                    ('other-stage', 1, 'done', 16384, NULL, NULL),
+                    ('archived', 1, 'in_review', 16384, CURRENT_TIMESTAMP, NULL),
+                    ('deleted', 1, 'in_review', 16384, NULL, CURRENT_TIMESTAMP)",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed excluded cards");
+            let mut transaction = connection.begin().await.expect("begin completion");
+            append_card_to_review(&mut transaction, 1, "completing")
+                .await
+                .expect("append to otherwise empty review column");
+            transaction.commit().await.expect("commit completion");
+            assert_eq!(
+                review_order(&mut connection).await,
+                vec![("completing".into(), POSITION_STEP)]
+            );
+            let unchanged: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM kanban_cards WHERE id != 'completing' AND sort_position = 16384",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("check excluded positions");
+            assert_eq!(unchanged, 4);
+        });
+    }
+
+    #[test]
+    fn review_append_rebalances_overflow_in_order_and_rolls_back_atomically() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = review_order_database().await;
+            sqlx::query(
+                "INSERT INTO kanban_cards (id, sort_position) VALUES
+                    ('existing-z', ?1), ('existing-a', ?2), ('completing', 0)",
+            )
+            .bind(i64::MAX - POSITION_STEP)
+            .bind(i64::MAX)
+            .execute(&mut connection)
+            .await
+            .expect("seed overflowing positions");
+            let original = review_order(&mut connection).await;
+            let mut transaction = connection
+                .begin()
+                .await
+                .expect("begin rolled back completion");
+            append_card_to_review(&mut transaction, 1, "completing")
+                .await
+                .expect("rebalance and append");
+            transaction.rollback().await.expect("roll back completion");
+            assert_eq!(review_order(&mut connection).await, original);
+
+            let mut transaction = connection.begin().await.expect("begin accepted completion");
+            append_card_to_review(&mut transaction, 1, "completing")
+                .await
+                .expect("rebalance and append");
+            transaction.commit().await.expect("commit completion");
+            let cards = review_order(&mut connection).await;
+            assert_eq!(
+                cards.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                vec!["existing-z", "existing-a", "completing"]
+            );
+            assert_eq!(cards[2].1, cards[1].1 + POSITION_STEP);
+        });
+    }
 
     #[test]
     fn accepted_plan_requires_valid_implementation_settings() {

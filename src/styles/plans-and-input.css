@@ -10,7 +10,7 @@
   --radius: 8px;
 }
 
-@property --history-active-drawer-width {
+@property --active-inspector-width {
   syntax: "<length>";
   inherits: true;
   initial-value: 0px;

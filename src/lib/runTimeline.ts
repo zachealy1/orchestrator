@@ -1,3 +1,5 @@
+import { parseAsyncReplies } from "./asyncUserInput";
+import { reasoningItemKey } from "./reasoningStream";
 import type {
   RunCommandActivity,
   RunToolActivity,
@@ -33,7 +35,7 @@ export function splitTimelineAtSteers(items: TimelineItem[]): TimelineSection[] 
 }
 
 export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
-  const sections = splitTimelineAtSteers(runView.streamEvents.map((event) =>
+  const sections = splitTimelineAtSteers(runView.streamEvents.filter(event => event.kind !== "steer" || !parseAsyncReplies(event.text)).map((event) =>
     event.kind === "steer" ? { kind: "steer", event } : { kind: "event", event },
   ));
   const commandSections = new Map<string, string>();
@@ -66,6 +68,9 @@ export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
       if (item.kind !== "event") continue;
       const { event } = item;
       if (shouldHideFinalMessageEvent(runView, event)) continue;
+      if (!event.text) continue;
+      if (event.kind === "reasoning" && event.identity?.target === "reasoningContent" &&
+        Object.values(runView.reasoningItems?.[reasoningItemKey(event.identity)]?.summaries ?? {}).some((text) => text.trim())) continue;
       if (event.kind === "file") {
         if (runView.editedFiles.length === 0) items.push(item);
         continue;
@@ -89,7 +94,7 @@ export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
         if (referencesKnownTool) {
           const referencesSectionTool = event.activityIds?.some((id) => toolSections.get(id) === section.id);
           const selected = referencesSectionTool
-            ? tools.filter((activity) => !renderedToolIds.has(activity.id)) : [];
+            ? tools.filter((activity) => event.activityIds?.includes(activity.id) && !renderedToolIds.has(activity.id)) : [];
           if (selected.length > 0) {
             items.push({ kind: "tools", id: `tools-${event.id}`, activities: selected });
             selected.forEach((activity) => renderedToolIds.add(activity.id));
@@ -112,12 +117,22 @@ export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
     }
     if (section.steer) items.push({ kind: "steer", event: section.steer });
   }
-  return items;
+  return items.reduce<TimelineItem[]>((grouped, item) => {
+    const previous = grouped[grouped.length - 1];
+    if (item.kind === "commands" && previous?.kind === "commands") {
+      grouped[grouped.length - 1] = { ...previous, commands: [...previous.commands, ...item.commands] };
+    } else if (item.kind === "tools" && previous?.kind === "tools" &&
+      previous.activities[0]?.category === item.activities[0]?.category) {
+      grouped[grouped.length - 1] = { ...previous, activities: [...previous.activities, ...item.activities] };
+    } else grouped.push(item);
+    return grouped;
+  }, []);
 }
 
 function shouldHideFinalMessageEvent(runView: RunViewState, event: StreamActivityEvent) {
   if (event.kind !== "message") return false;
   const activityIds = event.activityIds ?? [];
+  if (activityIds.some(id => runView.agentMessagesById[id]?.delivery === "async")) return true;
   if (activityIds.some((id) =>
     runView.agentMessagesById[id]?.phase === "final_answer" || id === runView.finalMessageItemId,
   )) return true;

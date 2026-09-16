@@ -2,11 +2,16 @@ import { useRef, useState } from "react";
 import { BarChart3, Puzzle, Settings } from "lucide-react";
 import { OrchestratorBetaBrand } from "../../components/OrchestratorBetaBrand";
 import { SettingsView, type SettingsViewActions, type SettingsViewModel } from "../../features/settings/SettingsView";
-import { WorkspaceSidebar } from "../../features/workspaces/WorkspaceSidebar";
+import { WorkspaceSidebar, type SidebarMode } from "../../features/workspaces/WorkspaceSidebar";
 import { githubConnection, workspace } from "./fixtures";
 
 function initialModel(): SettingsViewModel {
   return {
+    usage: {
+      accounts: [], selectedAccountId: null,
+      state: { status: "unsupported", snapshot: null, refreshing: false, stale: false, error: null },
+      reset: { canReset: false, canConfirm: false, retrying: false, retryCredit: null, pending: false, confirmation: null, message: null },
+    },
     computerUseEnabled: true,
     browserPreferences: { downloadLocation: null, askWhereToSave: false },
     browserReadiness: { available: true, checking: false, message: null, pluginId: "browser@openai-bundled", pluginInstalled: true, pluginEnabled: true, isolatedProfile: true, profileImportAvailable: false },
@@ -32,9 +37,11 @@ function initialModel(): SettingsViewModel {
 
 export function SettingsDemo({ onOpenBoard, onNotice }: { onOpenBoard: () => void; onNotice: (message: string) => void }) {
   const [model, setModel] = useState(initialModel);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("chats");
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const explain = () => onNotice("Sample Settings page. GitLab connection actions are simulated; other system actions are not connected.");
   const actions: SettingsViewActions = {
+    usage: { selectAccount: explain, retry: explain, requestReset: explain, cancelReset: explain, confirmReset: async () => explain() },
     setComputerUseEnabled: enabled => setModel(m => ({ ...m, computerUseEnabled: enabled })),
     setBrowserAskWhereToSave: enabled => setModel(m => ({ ...m, browserPreferences: { ...m.browserPreferences, askWhereToSave: enabled } })),
     chooseBrowserDownloadLocation: explain, resetBrowserDownloadLocation: explain, clearBrowserData: async () => explain(),
@@ -57,10 +64,14 @@ export function SettingsDemo({ onOpenBoard, onNotice }: { onOpenBoard: () => voi
           <button type="button" onClick={explain}><Puzzle size={17} /><span>Plugins</span></button>
         </nav>
         <WorkspaceSidebar model={{
+          mode: sidebarMode, histories: {}, priority: { status: "loaded", chats: [], error: null },
+          selectedChatId: null, runningChatActivity: new Map(), unreadChats: {},
           workspaces: [workspace], selectedWorkspaceId: workspace.id, taskViewActive: false, runIsActive: false,
           expandedWorkspaceIds: new Set(), expandedDirectoryPaths: new Set(), directoryStates: {},
           gitStatusByWorkspaceId: new Map(), dirtyDirectoryPathsByWorkspaceId: new Map(), contextMenu: null, contextMenuRef,
         }} actions={{
+          setMode: setSidebarMode, selectChat: explain, loadChats: explain, retryPriority: explain, retryDirectory: explain,
+          openChatContextMenu: (_chat, event) => { event.preventDefault(); explain(); },
           addWorkspace: explain, toggleWorkspace: onOpenBoard, selectWorkspace: onOpenBoard,
           handleWorkspaceKeyDown: () => undefined, openWorkspaceContextMenu: (_workspace, event) => { event.preventDefault(); explain(); },
           requestWorkspaceDelete: explain, toggleDirectory: explain, startFileDrag: () => undefined,

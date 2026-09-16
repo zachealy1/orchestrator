@@ -1,5 +1,5 @@
 import { commands } from "../../generated/tauri";
-import type { ChatListItem, ChatWithRuns, ExternalTranscriptSnapshot, HistoryRunSummary } from "../../features/conversations/types";
+import type { ChatListItem, PriorityChatListItem, ChatWithRuns, ExternalTranscriptSnapshot, HistoryRunSummary } from "../../features/conversations/types";
 import type { RunListItem } from "../../features/runs/types";
 import { isSubagentLifecycleStatus, type SubagentInstruction, type SubagentInstructionKind, type SubagentLifecycleStatus, type SubagentRecord } from "../../lib/subagents";
 import { FrontendDatabase } from "../database";
@@ -9,10 +9,13 @@ export function createTranscriptRepository(database: FrontendDatabase) {
   const selectOne = <T>(query: string, bindValues: unknown[] = []) =>
     database.selectOne<T>(query, bindValues);
 
-  async function listWorkspaceChats(workspaceId: number) {
+  async function queryChatList<T extends ChatListItem>(
+    predicate: string, bindings: unknown[], ending: string,
+    prefix = "", extraJoin = "", extraColumns = "",
+  ): Promise<T[]> {
     const db = await getDatabase();
-    return db.select<ChatListItem[]>(
-      `SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
+    return db.select<T[]>(
+      `${prefix} SELECT chats.id, chats.workspace_id, chats.account_id, chats.title,
         chats.codex_thread_id, chats.status, chats.created_at, chats.updated_at,
         chats.deleted_at, chats.surface, chats.origin, chats.profile_key, chats.external_thread_id,
         chats.source_kind, chats.sync_status, chats.external_cwd,
@@ -58,8 +61,8 @@ export function createTranscriptRepository(database: FrontendDatabase) {
         END AS turn_count,
         COALESCE(SUM(latest_tokens.run_tokens), 0) AS total_tokens,
         COALESCE(SUM(runs.duration_ms), 0) AS duration_ms,
-        latest_run.model AS latest_model
-       FROM chats
+        latest_run.model AS latest_model ${extraColumns}
+       FROM chats ${extraJoin}
        LEFT JOIN runs ON runs.chat_id = chats.id AND runs.deleted_at IS NULL
        LEFT JOIN external_chat_transcript_snapshots external_snapshot
          ON external_snapshot.chat_id = chats.id
@@ -78,7 +81,7 @@ export function createTranscriptRepository(database: FrontendDatabase) {
            inner_runs.started_at DESC
          LIMIT 1
        )
-       WHERE chats.workspace_id = $1
+       WHERE ${predicate}
          AND chats.deleted_at IS NULL
          AND (
            chats.surface = 'chat'
@@ -94,9 +97,53 @@ export function createTranscriptRepository(database: FrontendDatabase) {
            )
          )
        GROUP BY chats.id
-       ORDER BY julianday(latest_activity_at) DESC, chats.id DESC
-       LIMIT 50`,
-      [workspaceId],
+       ${ending}`, bindings,
+    );
+  }
+
+  function listWorkspaceChats(workspaceId: number) {
+    return queryChatList<ChatListItem>("chats.workspace_id = $1", [workspaceId],
+      "ORDER BY julianday(latest_activity_at) DESC, chats.id DESC LIMIT 50");
+  }
+
+  function listSidebarWorkspaceChats(workspaceId: number, limit = 50, offset = 0) {
+    return queryChatList<ChatListItem>("chats.workspace_id = $1", [workspaceId, limit, offset],
+      "ORDER BY julianday(latest_activity_at) DESC, chats.id DESC LIMIT $2 OFFSET $3");
+  }
+
+  function listPriorityChats(now: string): Promise<PriorityChatListItem[]> {
+    return queryChatList<PriorityChatListItem>(
+      `EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = chats.workspace_id AND workspaces.deleted_at IS NULL)
+       AND finished.position = 1
+       AND julianday(finished.completed_at) > julianday($1) - 1
+       AND julianday(finished.completed_at) <= julianday($1)
+       AND NOT EXISTS (SELECT 1 FROM activity active
+         WHERE active.chat_id = chats.id
+           AND active.status IN ('starting', 'connecting', 'running', 'inProgress', 'in_progress'))`,
+      [now],
+      "ORDER BY julianday(finished.completed_at) DESC, chats.id DESC",
+      `WITH activity AS (
+         SELECT chat_id, id AS sequence, status, completed_at
+         FROM runs WHERE deleted_at IS NULL
+         UNION ALL
+         SELECT turns.chat_id, turns.slot_index AS sequence, turns.status, turns.completed_at
+         FROM external_chat_turn_summaries turns
+         JOIN external_chat_transcript_snapshots snapshots
+           ON snapshots.chat_id = turns.chat_id AND snapshots.source_version = turns.source_version
+         WHERE NOT EXISTS (SELECT 1 FROM runs local
+           WHERE local.chat_id = turns.chat_id AND local.deleted_at IS NULL
+             AND local.codex_turn_id = turns.external_turn_id)
+       ), finished AS (
+         SELECT chat_id, completed_at,
+           CASE WHEN status IN ('interrupted', 'cancelled', 'canceled') THEN 'cancelled'
+                WHEN status IN ('failed', 'error') THEN 'failed' ELSE 'completed' END AS status,
+           ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY julianday(completed_at) DESC, sequence DESC) AS position
+         FROM activity
+         WHERE status IN ('completed', 'failed', 'error', 'interrupted', 'cancelled', 'canceled')
+           AND completed_at IS NOT NULL
+       )`,
+      "JOIN finished ON finished.chat_id = chats.id",
+      ", strftime('%Y-%m-%dT%H:%M:%fZ', finished.completed_at) AS latest_finished_at, finished.status AS latest_finished_status",
     );
   }
 
@@ -577,6 +624,8 @@ export function createTranscriptRepository(database: FrontendDatabase) {
 
   return {
     listWorkspaceChats,
+    listSidebarWorkspaceChats,
+    listPriorityChats,
     getChatWithRuns,
     listLocalChatTranscript,
     upsertRunSubagent,
