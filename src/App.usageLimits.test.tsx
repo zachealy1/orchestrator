@@ -1,4 +1,5 @@
-import { screen } from "@testing-library/react";
+import { usageLimitsResponse, usageResetCredit } from "./test/usageLimitsFixture";
+import { screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   emitCodexNotification,
@@ -63,9 +64,10 @@ describe("Application usage limits", () => {
     const { user } = await renderApp();
     await user.click(screen.getByRole("button", { name: "Analytics" }));
 
-    expect(await screen.findByText("Weekly usage limit")).toBeInTheDocument();
-    expect(screen.getByText("75% remaining")).toBeInTheDocument();
-    expect(screen.queryByText("Monthly usage limit")).not.toBeInTheDocument();
+    const usagePanel = within(screen.getByRole("article", { name: "Usage limits" }));
+    expect(await usagePanel.findByText("Weekly usage limit")).toBeInTheDocument();
+    expect(usagePanel.getByText("75% remaining")).toBeInTheDocument();
+    expect(usagePanel.queryByText("Monthly usage limit")).not.toBeInTheDocument();
     expect(mocks.readCodexRateLimitsMock).toHaveBeenCalledWith(
       `account:${signedInAccount.id}`,
       signedInAccount.id,
@@ -104,6 +106,39 @@ describe("Application usage limits", () => {
       },
     });
 
-    expect(await screen.findByText("80% remaining")).toBeInTheDocument();
+    expect(await usagePanel.findByText("80% remaining")).toBeInTheDocument();
   });
+  it("shows usage beneath Accounts, finds resets through search, and shares redemption results with Analytics", async () => {
+    mocks.listCodexAccountsMock.mockResolvedValue([signedInAccount]);
+    mocks.readCodexAccountMock.mockResolvedValue({ account: { type: "chatgpt", email: signedInAccount.email, planType: "plus" }, requiresOpenaiAuth: true });
+    const response = usageLimitsResponse(2);
+    response.rateLimitResetCredits!.credits = [usageResetCredit(), usageResetCredit({ id: "reset-two", expiresAt: 1_900_086_400 })];
+    mocks.readCodexRateLimitsMock.mockResolvedValue(response);
+    mocks.consumeCodexRateLimitResetCreditMock.mockImplementation(async () => {
+      const refreshed = usageLimitsResponse(1, 0);
+      refreshed.rateLimitResetCredits!.credits = [usageResetCredit()];
+      mocks.readCodexRateLimitsMock.mockResolvedValue(refreshed);
+      return { outcome: "reset" };
+    });
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const panel = await screen.findByRole("region", { name: "Account usage" });
+    expect(document.getElementById("settings-accounts")!.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await within(panel).findByText("2 earned resets available")).toBeInTheDocument();
+    await user.type(screen.getByRole("searchbox", { name: "Search settings" }), "resets");
+    expect(panel).toBeInTheDocument();
+    await user.click(within(panel).getAllByRole("button", { name: /^Use reset:/ })[1]);
+    const dialog = screen.getByRole("dialog", { name: "Use one usage reset?" });
+    expect(dialog).toHaveTextContent(signedInAccount.label);
+    expect(mocks.consumeCodexRateLimitResetCreditMock).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Use 1 reset" }));
+    expect(await screen.findByText("Usage reset applied.")).toBeInTheDocument();
+    await waitFor(() => expect(within(panel).getByText("1 earned reset available")).toBeInTheDocument());
+    expect(mocks.consumeCodexRateLimitResetCreditMock).toHaveBeenCalledExactlyOnceWith(`account:${signedInAccount.id}`, signedInAccount.id, expect.any(String), "reset-two");
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(panel).getByText("100% remaining")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Analytics" }));
+    expect(await within(screen.getByRole("article", { name: "Usage limits" })).findByText("100% remaining")).toBeInTheDocument();
+  });
+
 });

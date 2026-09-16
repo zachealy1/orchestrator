@@ -85,7 +85,6 @@ export type WorkspaceController = {
   gitActionInFlightRef: MutableRefObject<boolean>;
   gitOperationInFlightWorkspaceIdsRef: MutableRefObject<Set<number>>;
   gitOperationSequenceRef: MutableRefObject<number>;
-  gitStatusRefreshCache: MutableRefObject<Map<number, Promise<void>>>;
   workspaceFileIndexCache: MutableRefObject<Map<number, WorkspaceTreeEntry[]>>;
   workspaceFileIndexRequestCache: MutableRefObject<
     Map<number, Promise<WorkspaceTreeEntry[]>>
@@ -137,7 +136,6 @@ export function useWorkspaceController(): WorkspaceController {
     new Map<string, Promise<WorkspaceTreeEntry[]>>(),
   );
   const directoryRequestGenerations = useRef(new Map<string, number>());
-  const gitStatusRefreshCache = useRef(new Map<number, Promise<void>>());
   const workspaceFileIndexCache = useRef(
     new Map<number, WorkspaceTreeEntry[]>(),
   );
@@ -230,7 +228,6 @@ export function useWorkspaceController(): WorkspaceController {
     gitActionInFlightRef,
     gitOperationInFlightWorkspaceIdsRef,
     gitOperationSequenceRef,
-    gitStatusRefreshCache,
     workspaceFileIndexCache,
     workspaceFileIndexRequestCache,
   };
