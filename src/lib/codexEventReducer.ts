@@ -16,6 +16,7 @@ import {
 } from "./planProgress";
 import {
   parseThreadTokenUsage,
+  resolveTokenUsageBaseline,
   type TokenUsage,
 } from "./contextUsage";
 import type { RunWebPreview } from "./webPreview";
@@ -233,16 +234,23 @@ export function applyCodexMessage(
     }
     case "thread/tokenUsage/updated": {
       const parsedTokenUsage = parseThreadTokenUsage(params.tokenUsage);
+      const previousBaseline = {
+        total: state.tokenUsageStartTotal,
+        cachedInput: state.tokenUsageStartCachedInput,
+      };
+      const baseline = parsedTokenUsage && !state.tokenUsage
+        ? resolveTokenUsageBaseline(params.tokenUsage, previousBaseline)
+        : previousBaseline;
       const tokenUsage = parsedTokenUsage
         ? {
             ...parsedTokenUsage,
             turnTokens: calculateUsageDelta(
               parsedTokenUsage.totalTokens,
-              state.tokenUsageStartTotal,
+              baseline.total,
             ),
             turnCachedInputTokens: calculateUsageDelta(
               parsedTokenUsage.cachedInputTokens,
-              state.tokenUsageStartCachedInput,
+              baseline.cachedInput,
             ),
           }
         : null;
@@ -250,6 +258,8 @@ export function applyCodexMessage(
         ...state,
         threadId: readString(params.threadId) ?? state.threadId,
         turnId: readString(params.turnId) ?? state.turnId,
+        tokenUsageStartTotal: baseline.total,
+        tokenUsageStartCachedInput: baseline.cachedInput,
         tokenUsage: tokenUsage ?? state.tokenUsage,
       };
     }
