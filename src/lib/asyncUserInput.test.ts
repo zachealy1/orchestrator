@@ -36,9 +36,11 @@ describe("Codex async-question protocol", () => {
     let state = { ...emptyRunView, status: "running" as const, threadId: "thread", turnId: "turn" };
     const message = { ...item, phase: "final_answer", text: "<proposed_plan>Not a plan</proposed_plan>" };
     let next = applyCodexMessage(state, { method: "item/started", params: { item: message } });
+    expect(next.agentMessagesById.q1.phase).toBe("commentary");
     next = applyCodexMessage(next, { method: "item/agentMessage/delta", params: { itemId: "q1", delta: "Question" } });
     next = applyCodexMessage(next, { method: "item/completed", params: { item: message } });
-    expect(next.agentMessagesById.q1).toMatchObject({ delivery: "async", questions: item.questions, phase: "commentary", threadId: "thread", turnId: "turn" });
+    expect(next.agentMessagesById.q1).toMatchObject({ delivery: "async", questions: item.questions, phase: "commentary", threadId: "thread", turnId: "turn", completed: true });
+    expect(applyCodexMessage(next, { method: "item/agentMessage/delta", params: { itemId: "q1", delta: "Late question fragment" } })).toBe(next);
     expect(next.status).toBe("running"); expect(next.serverRequests).toEqual([]);
     expect(next.finalMessage).toBe(""); expect(next.nativePlan.completedText).toBe("");
     expect(buildTimelineItems(next).some(i => i.kind === "event" && i.event.kind === "message")).toBe(false);

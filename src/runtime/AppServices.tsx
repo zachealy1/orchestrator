@@ -19,13 +19,14 @@ import {
 } from "../lib/subagents";
 import { TranscriptGeometryCache } from "../lib/transcriptVirtualization";
 import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
-import { AnimationFrameBatcher } from "../shared/AnimationFrameBatcher";
+import { CodexStreamScheduler } from "../features/codex/CodexStreamScheduler";
 import { AsyncResourceCache } from "../shared/cache/AsyncResourceCache";
-import type { CodexMessage, CodexProfileKey } from "../features/codex/types";
+
 import { HistoricalTranscriptCache } from "../features/conversations/HistoricalTranscriptCache";
 import type { HistoricalTurnActivityResponse } from "../codexClient";
 import { WorkspaceTaskMemoryStore } from "../features/conversations/WorkspaceTaskMemoryStore";
 import { WorkspaceFilePreviewService } from "../features/workspaces/WorkspaceFilePreviewService";
+import { ChatTitleCoordinator } from "../features/conversations/ChatTitleCoordinator";
 
 export type CachedTranscriptState = {
   snapshot: StateSnapshot;
@@ -35,16 +36,14 @@ export type CachedTranscriptState = {
 export class AppServices {
   readonly database = new FrontendDatabase();
   readonly repositories = createAppRepositories(this.database);
+  readonly chatTitles = new ChatTitleCoordinator();
   readonly codexEvents = new CodexEventRouter();
   readonly runCoordinator = new RunCoordinator();
   readonly activeRuns = new ActiveRunRegistry();
   readonly runEvents = new RunEventBuffer((events) =>
     this.repositories.runs.appendRunEvents(events),
   );
-  readonly codexNotificationFrames = new AnimationFrameBatcher<{
-    profileKey: CodexProfileKey;
-    message: CodexMessage;
-  }>();
+  readonly codexNotificationFrames = new CodexStreamScheduler();
   readonly historicalTranscripts = new HistoricalTranscriptCache(5, 2_000_000);
   readonly historicalActivities = new AsyncResourceCache<
     string,
@@ -100,6 +99,7 @@ export class AppServices {
   }
 
   dispose() {
+    this.chatTitles.dispose();
     this.database.dispose();
     this.codexEvents.dispose();
     this.runCoordinator.dispose();

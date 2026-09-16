@@ -19,7 +19,7 @@ describe("native async questions in the application", () => {
     expect(await screen.findByRole("radio", { name: "Blue" })).toBeChecked();
     expect(mocks.resolveCodexServerRequestMock).not.toHaveBeenCalled();
     await emitCodexNotification({ method: "item/agentMessage/delta", params: { threadId: "thread-1", turnId: "turn-1", itemId: "independent-work", delta: "I am checking the existing styles." } });
-    expect(await screen.findByText("I am checking the existing styles.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("App-server stream")).toHaveTextContent("I am checking the existing styles."));
     await user.click(screen.getByRole("radio", { name: "Green" }));
     expect(mocks.codexRpcMock.mock.calls.some(call => call[1] === "turn/steer")).toBe(false);
     await user.click(screen.getByRole("button", { name: "Submit answer" }));

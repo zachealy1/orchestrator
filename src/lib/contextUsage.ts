@@ -40,6 +40,39 @@ export function parseThreadTokenUsage(value: unknown): TokenUsage | null {
   };
 }
 
+// A resumed engine may start a new cumulative counter. Establish its baseline
+// from the first report before applying deltas; old transcript totals can belong
+// to a different counter, or be absent when history has not been loaded.
+export function resolveTokenUsageBaseline(
+  value: unknown,
+  baseline: { total: number | null; cachedInput: number | null },
+) {
+  const usage = readObject(value);
+  const total = readObject(usage.total);
+  const last = readObject(usage.last);
+  const totalTokens = readNonNegativeNumber(total.totalTokens);
+  const lastTokens = readNonNegativeNumber(last.totalTokens);
+  const counterRestarted = totalTokens !== null && totalTokens === lastTokens;
+  const needsBaseline =
+    baseline.total === null ||
+    (totalTokens !== null && totalTokens < baseline.total);
+  if (!counterRestarted && !needsBaseline) return baseline;
+
+  const inferBaseline = (current: unknown, recent: unknown) => {
+    const currentCount = readNonNegativeNumber(current);
+    const recentCount = readNonNegativeNumber(recent);
+    return currentCount !== null && recentCount !== null && currentCount >= recentCount
+      ? currentCount - recentCount
+      : null;
+  };
+  return {
+    total: counterRestarted ? 0 : inferBaseline(total.totalTokens, last.totalTokens),
+    cachedInput: counterRestarted
+      ? 0
+      : inferBaseline(total.cachedInputTokens, last.cachedInputTokens),
+  };
+}
+
 export function getContextUsageDisplay(
   tokenUsage: TokenUsage | null,
   fallbackContextWindow: number,

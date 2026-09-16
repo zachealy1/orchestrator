@@ -1951,47 +1951,68 @@ pub(crate) fn git_repository_descriptor(
     })
 }
 
-pub(crate) fn validate_git_worktree(candidate: &Path) -> Option<PathBuf> {
-    let candidate_arg = candidate.to_string_lossy();
-    let inside = run_command(
-        "git",
-        &[
-            "-C",
-            candidate_arg.as_ref(),
-            "rev-parse",
-            "--is-inside-work-tree",
-        ],
-    );
-    if !inside.ok || inside.stdout.trim() != "true" {
-        return None;
+pub(crate) fn git_worktree_probe_root(
+    candidate: &Path,
+    probe: CommandProbe,
+) -> Result<Option<PathBuf>, String> {
+    if !probe.ok {
+        // An ordinary folder (or a bare repository) is not a discovery failure.
+        // Do not treat a broken repository with a .git marker as an ordinary folder.
+        let has_git_marker = candidate
+            .ancestors()
+            .any(|ancestor| fs::symlink_metadata(ancestor.join(".git")).is_ok());
+        if (!has_git_marker
+            && probe
+                .stderr
+                .starts_with("fatal: not a git repository (or any"))
+            || probe.stderr.trim() == "fatal: this operation must be run in a work tree"
+        {
+            return Ok(None);
+        }
+        return Err(format!(
+            "Unable to inspect Git repository at {}: {}",
+            candidate.display(),
+            output_detail(&probe)
+                .unwrap_or_else(|| "Git did not complete successfully".to_string())
+        ));
     }
-    let bare = run_command(
-        "git",
-        &[
-            "-C",
-            candidate_arg.as_ref(),
-            "rev-parse",
-            "--is-bare-repository",
-        ],
-    );
-    if !bare.ok || bare.stdout.trim() == "true" {
-        return None;
-    }
-    let root = run_command(
-        "git",
-        &["-C", candidate_arg.as_ref(), "rev-parse", "--show-toplevel"],
-    );
-    if !root.ok {
-        return None;
-    }
-    fs::canonicalize(root.stdout.trim()).ok()
+    let root = fs::canonicalize(probe.stdout.trim())
+        .map_err(|error| format!("Unable to open Git root {}: {error}", probe.stdout.trim()))?;
+    Ok(Some(root))
+}
+
+pub(crate) fn validate_git_worktree(candidate: &Path) -> Result<Option<PathBuf>, String> {
+    // Only the expected non-repository diagnostics are classified below; keep
+    // their language stable without changing other Git commands or the app locale.
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(candidate)
+        .args(["rev-parse", "--show-toplevel"])
+        .env("LC_ALL", "C")
+        .output()
+        .map_err(|error| format!("Unable to run Git for {}: {error}", candidate.display()))?;
+    git_worktree_probe_root(
+        candidate,
+        CommandProbe {
+            ok: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        },
+    )
 }
 
 pub(crate) fn discover_git_repositories_uncached(
     workspace: &Path,
 ) -> Result<(Vec<DiscoveredGitRepository>, bool), String> {
+    discover_git_repositories_with_probe(workspace, validate_git_worktree)
+}
+
+pub(crate) fn discover_git_repositories_with_probe(
+    workspace: &Path,
+    mut probe: impl FnMut(&Path) -> Result<Option<PathBuf>, String>,
+) -> Result<(Vec<DiscoveredGitRepository>, bool), String> {
     let mut roots = HashSet::<PathBuf>::new();
-    if let Ok(root) = resolve_git_root(workspace) {
+    if let Some(root) = probe(workspace)? {
         roots.insert(root);
     }
 
@@ -2007,8 +2028,8 @@ pub(crate) fn discover_git_repositories_uncached(
         }
         visited_directories += 1;
 
-        if directory.join(".git").exists() {
-            if let Some(root) = validate_git_worktree(&directory) {
+        if directory != workspace && fs::symlink_metadata(directory.join(".git")).is_ok() {
+            if let Some(root) = probe(&directory)? {
                 if root.starts_with(workspace) || workspace.starts_with(&root) {
                     roots.insert(root);
                 }
@@ -2093,11 +2114,17 @@ pub(crate) fn resolve_workspace_git_repository(
     };
     let requested = fs::canonicalize(repository_path)
         .map_err(|_| "The selected Git repository is no longer available".to_string())?;
-    let (repositories, _) = discover_git_repositories(workspace, true)?;
+    let (repositories, truncated) = discover_git_repositories(workspace, true)?;
     repositories
         .into_iter()
         .find(|repository| repository.root == requested)
-        .ok_or_else(|| "The selected Git repository does not belong to this workspace".to_string())
+        .ok_or_else(|| {
+            if truncated {
+                "Git repository discovery was incomplete; the selected repository could not be verified".to_string()
+            } else {
+                "The selected Git repository does not belong to this workspace".to_string()
+            }
+        })
 }
 
 pub(crate) fn git_relative_path(git_root: &Path, path: &Path) -> Result<String, String> {
