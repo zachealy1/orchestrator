@@ -68,6 +68,8 @@ import {
   notificationStatusDetails,
 } from "./settingsStatusDetails";
 
+import { SettingsAccountUsage, type SettingsAccountUsageActions, type SettingsAccountUsageModel } from "./SettingsAccountUsage";
+
 type ComputerUsePermissionState = "verified" | "denied" | "unverified";
 
 function computerUseRuntimeCanRun(status: DesktopRuntimeStatus | null) {
@@ -120,6 +122,7 @@ function computerUseDetailStatus(
 }
 
 export type SettingsViewModel = {
+  usage: SettingsAccountUsageModel;
   dragRegion?: string;
   computerUseEnabled: boolean;
   browserPreferences: BrowserPreferences;
@@ -146,6 +149,7 @@ export type SettingsViewModel = {
 };
 
 export type SettingsViewActions = {
+  usage: SettingsAccountUsageActions;
   setComputerUseEnabled: (enabled: boolean) => void;
   setBrowserAskWhereToSave: (enabled: boolean) => void;
   chooseBrowserDownloadLocation: () => void;
@@ -864,6 +868,10 @@ export const SettingsView = memo(function SettingsView({
       ) : null}
 
       {matchesSettings("privacy", "activity", "posthog", "share installation activity") ? <InstallationActivitySettings /> : null}
+
+      {matchesSettings("account usage", "accounts", "codex", "usage limits", "earned resets", "credits") ? (
+        <SettingsAccountUsage model={model.usage} actions={actions.usage} active={active} />
+      ) : null}
 
       {matchesSettings("about", "orchestrator", "app version", appVersion.toLowerCase()) ? (
         <section

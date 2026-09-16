@@ -5,6 +5,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
+import { useId } from "react";
 import { formatCodexPlanType } from "../lib/codexAuth";
 import type {
   AnalyticsUsageAccount,
@@ -15,6 +16,8 @@ import { isManagedCodexPlan } from "../features/analytics/usageLimits";
 import { ComposerSelect } from "./ComposerSelect";
 
 type Props = {
+  title?: string;
+  showRefreshingIndicator?: boolean;
   accounts: AnalyticsUsageAccount[];
   selectedAccountId: number | null;
   state: CodexUsageLimitsAccountState;
@@ -28,7 +31,10 @@ export function AnalyticsUsageLimits({
   state,
   onAccountChange,
   onRetry,
+  title = "Usage limits",
+  showRefreshingIndicator = true,
 }: Props) {
+  const titleId = useId();
   const selectedAccount =
     accounts.find((account) => account.accountId === selectedAccountId) ?? null;
   const snapshot = state.snapshot;
@@ -44,7 +50,7 @@ export function AnalyticsUsageLimits({
   return (
     <article
       className="analytics-card analytics-usage-card"
-      aria-labelledby="analytics-usage-title"
+      aria-labelledby={titleId}
       aria-busy={state.status === "loading" || state.refreshing}
     >
       <div className="analytics-usage-header">
@@ -54,7 +60,7 @@ export function AnalyticsUsageLimits({
           </span>
           <div>
             <div className="analytics-usage-title-line">
-              <h2 id="analytics-usage-title">Usage limits</h2>
+              <h2 id={titleId}>{title}</h2>
               {planType ? (
                 <span className="analytics-usage-plan-badge">
                   {formatCodexPlanType(planType)}
@@ -100,13 +106,6 @@ export function AnalyticsUsageLimits({
         ) : snapshot ? (
           <>
             <h3 className="analytics-usage-section-title">{sectionTitle}</h3>
-            {snapshot.rateLimitReachedType ||
-            snapshot.buckets.some((bucket) => bucket.reached) ? (
-              <div className="analytics-usage-warning" role="status">
-                <AlertCircle size={16} aria-hidden="true" />
-                <span>A Codex usage limit has been reached for this account.</span>
-              </div>
-            ) : null}
             {managedPlan && !snapshot.hasIndividualLimit ? (
               <div className="analytics-usage-admin-note">
                 Your admin hasn’t set a usage limit.
@@ -124,7 +123,7 @@ export function AnalyticsUsageLimits({
                 detail="Codex did not return a usage window for this account."
               />
             )}
-            <UsageFooter state={state} onRetry={onRetry} />
+            <UsageFooter state={state} onRetry={onRetry} showRefreshingIndicator={showRefreshingIndicator} />
           </>
         ) : null}
       </div>
@@ -206,12 +205,14 @@ function UsageError({
 function UsageFooter({
   state,
   onRetry,
+  showRefreshingIndicator,
 }: {
   state: CodexUsageLimitsAccountState;
   onRetry: () => void;
+  showRefreshingIndicator: boolean;
 }) {
   const credits = state.snapshot?.credits;
-  if (!credits && !state.stale && !state.refreshing) return null;
+  if (!credits && !state.stale && !(state.refreshing && showRefreshingIndicator)) return null;
   return (
     <div className="analytics-usage-footer">
       {credits ? (
@@ -231,7 +232,7 @@ function UsageFooter({
           <RefreshCw size={14} aria-hidden="true" />
           Refresh failed — retry
         </button>
-      ) : state.refreshing ? (
+      ) : state.refreshing && showRefreshingIndicator ? (
         <span className="analytics-usage-refreshing">
           <RefreshCw size={14} aria-hidden="true" />
           Refreshing

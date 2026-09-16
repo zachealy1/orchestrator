@@ -72,6 +72,14 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
   const addAccount = useStableEvent(currentActions.addAccount);
   const connectAccount = useStableEvent(currentActions.connectAccount);
   const logout = useStableEvent(currentActions.logout);
+  const selectUsageAccount = useStableEvent(currentActions.usage.selectAccount);
+  const retryUsage = useStableEvent(currentActions.usage.retry);
+  const requestReset = useStableEvent(currentActions.usage.requestReset);
+  const cancelReset = useStableEvent(currentActions.usage.cancelReset);
+  const confirmReset = useStableEvent(currentActions.usage.confirmReset);
+  const usageActions = useMemo(() => ({
+    selectAccount: selectUsageAccount, retry: retryUsage, requestReset, cancelReset, confirmReset,
+  }), [selectUsageAccount, retryUsage, requestReset, cancelReset, confirmReset]);
 
   const model = useMemo<SettingsViewModel>(
     () => ({ ...currentModel, activeRunAccountIds }),
@@ -99,11 +107,13 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       currentModel.runIsActive,
       currentModel.selectedAccountId,
       currentModel.showLogout,
+      currentModel.usage,
     ],
   );
 
   const actions = useMemo<SettingsViewActions>(
     () => ({
+      usage: usageActions,
       setComputerUseEnabled,
       setBrowserAskWhereToSave,
       chooseBrowserDownloadLocation,
@@ -132,6 +142,7 @@ export function useSettingsViewBindings(input: SettingsViewBindings) {
       logout,
     }),
     [
+      usageActions,
       addAccount,
       cancelLogin,
       chooseBrowserDownloadLocation,
