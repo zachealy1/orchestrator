@@ -1,3 +1,4 @@
+import { InstallationActivitySettings } from "../installationActivity/InstallationActivityProvider";
 import {
   Bell,
   Check,
@@ -865,6 +866,8 @@ export const SettingsView = memo(function SettingsView({
           </div>
         </section>
       ) : null}
+
+      {matchesSettings("privacy", "activity", "posthog", "share installation activity") ? <InstallationActivitySettings /> : null}
 
       {matchesSettings("account usage", "accounts", "codex", "usage limits", "earned resets", "credits") ? (
         <SettingsAccountUsage model={model.usage} actions={actions.usage} active={active} />

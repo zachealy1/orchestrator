@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{sync::oneshot, time::timeout};
 
 mod agent_notifications;
+mod analytics;
 mod app_updates;
 mod update_gate;
 mod release_backup;
@@ -69,6 +70,9 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
         .dangerously_cast_bigints_to_number()
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         .commands(tauri_specta::collect_commands![
+            analytics::analytics_record_activity,
+            analytics::analytics_get_preferences,
+            analytics::analytics_set_enabled,
             codex_engine::codex_engine_status,
             app_updates::app_update_state,
             app_updates::app_update_check,
@@ -221,6 +225,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             let database = tauri::async_runtime::block_on(DatabaseState::connect(app.handle()))
                 .map_err(std::io::Error::other)?;
+            analytics::initialize(app.handle(), database.clone());
             app.manage(database);
             Ok(())
         })

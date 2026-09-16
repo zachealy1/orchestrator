@@ -7,6 +7,9 @@ pub(crate) struct DatabaseState {
 }
 
 impl DatabaseState {
+    #[cfg(test)]
+    pub(crate) fn from_test_pool(pool: SqlitePool) -> Self { Self { pool } }
+
     pub(crate) async fn connect(app: &AppHandle) -> Result<Self, String> {
         let database_path = app
             .path()
