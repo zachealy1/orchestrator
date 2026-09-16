@@ -2,6 +2,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
+  Info,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -20,7 +21,7 @@ export const FLOATING_STATUS_NOTICE_TIMEOUT_MS = 60_000;
 export type FloatingStatusNotice = {
   id: string;
   revisionKey: string;
-  tone: "approval" | "warning" | "success";
+  tone: "approval" | "warning" | "success" | "info";
   title: string;
   detail?: string;
   actionLabel?: string;
@@ -334,6 +335,8 @@ function FloatingStatusRow({
         <ShieldCheck size={15} aria-hidden="true" />
       ) : notice.tone === "success" ? (
         <CheckCircle2 size={15} aria-hidden="true" />
+      ) : notice.tone === "info" ? (
+        <Info size={15} aria-hidden="true" />
       ) : (
         <CircleAlert size={15} aria-hidden="true" />
       )}
@@ -355,7 +358,7 @@ function FloatingStatusRow({
     <div
       className="composer-status-notice"
       data-tone={notice.tone}
-      role={notice.tone === "success" ? "status" : "alert"}
+      role={notice.tone === "success" || notice.tone === "info" ? "status" : "alert"}
       aria-label={notice.title}
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}

@@ -516,9 +516,9 @@ describe("Application runtime scenarios 6", () => {
         },
         { accountId: 0, profileKey: "default" },
       );
-      expect(
-        await screen.findByText("Implemented the edited shared prompt."),
-      ).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByLabelText("Live run output")).toHaveTextContent(
+        "Implemented the edited shared prompt.",
+      ));
 
       await emitCodexNotification(
         {

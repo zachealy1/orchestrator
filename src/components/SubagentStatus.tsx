@@ -1,3 +1,4 @@
+import { useDocumentVisible } from "../shared/documentVisibility";
 import {
   Bot,
   CheckCircle2,
@@ -44,6 +45,7 @@ export const SubagentStatus = memo(function SubagentStatus({
   const model = useMemo(() => deriveSubagentComposerModel(records), [records]);
   const popoverRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const documentVisible = useDocumentVisible();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const recordsRef = useRef(records);
   recordsRef.current = records;
@@ -64,10 +66,12 @@ export const SubagentStatus = memo(function SubagentStatus({
   }, [lifecycleReconciliationActive, onReconcile]);
 
   useEffect(() => {
-    if (!open || model.activeCount === 0) return;
+    if (!documentVisible || !open) return;
+    setNowMs(Date.now());
+    if (model.activeCount === 0) return;
     const interval = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(interval);
-  }, [model.activeCount, open]);
+  }, [documentVisible, model.activeCount, open]);
 
   useEffect(() => {
     if (!open) return;

@@ -1,3 +1,9 @@
+import { streamRunKey } from "../lib/streamIdentity";
+import type { StreamNotification } from "../features/codex/CodexStreamScheduler";
+import { isDocumentVisible, useDocumentVisible } from "../shared/documentVisibility";
+import { WorkspaceRefreshController } from "../features/workspaces/WorkspaceRefreshController";
+import { createChatTitleActions } from "./chatTitleActions";
+import { prepareCardBranchTitle } from "../features/kanban/branchTitleReadiness";
 import { useModelCatalog } from "../features/codex/useModelCatalog";
 import { useReleaseServices } from "./useReleaseServices";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -104,7 +110,6 @@ import {
 import {
   fallbackChatTitle,
   GENERATING_CHAT_TITLE,
-  sanitizeGeneratedChatTitle,
 } from "../lib/chatTitles";
 import { AnalyticsSummary } from "../components/AnalyticsSummary";
 import { ApplicationCommandPalette } from "../components/ApplicationCommandPalette";
@@ -225,6 +230,7 @@ import {
   type NativeTaskWorkspaceBinding,
 } from "../lib/nativeTaskWorkspaceBinding";
 import { normalizeExternalTranscriptUrl } from "../lib/transcriptLinks";
+import { resolveExecutionContext, readExecutionFileContext } from "../features/runs/executionContext";
 import {
   comparePromptQueueDisplayOrder,
   comparePromptQueueDispatchOrder,
@@ -357,7 +363,7 @@ import {
   codexRecoveryBlockedByActiveRunError,
   isRecoverableCodexTransportError,
 } from "../features/codex/connectionRecovery";
-import type { AdditionalContextEntry, PreflightReport, RunExecutionSettings } from "../features/runs/types";
+import type { PreflightReport, RunExecutionSettings } from "../features/runs/types";
 import type { AnalyticsDateRange } from "../features/analytics/types";
 import { useAnalyticsController } from "../features/analytics/useAnalyticsController";
 import { useCodexUsageLimitsController } from "../features/analytics/useCodexUsageLimitsController";
@@ -571,7 +577,6 @@ import {
 import {
   AGENT_NOTIFICATION_FOCUS_TIMEOUT_MS,
   BACKGROUND_INTERACTION_GRACE_MS,
-  BACKGROUND_REFRESH_RETRY_MS,
   BUFFERABLE_RUN_NOTIFICATION_METHODS,
   CODEX_LOGIN_TIMEOUT_MS,
   COMMIT_MESSAGE_GENERATION_ERROR,
@@ -579,7 +584,6 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   EMPTY_GIT_STATUS_BY_PATH,
   EXTERNAL_CODEX_SOURCE_KINDS,
-  GIT_STATUS_AUTO_REFRESH_INTERVAL_MS,
   HISTORY_ACTIVITY_PAGE_SIZE,
   HISTORY_CHAT_PAGE_SIZE,
   HISTORY_VIRTUOSO_BASE_INDEX,
@@ -761,6 +765,9 @@ function instructionKindForCollabTool(
 
 function App() {
   const appServices = useAppServices();
+  const documentVisible = useDocumentVisible();
+  const pendingRunPublicationsRef = useRef(new Map<string, ActiveRunControl>());
+  const workspaceRefreshControllerRef = useRef<WorkspaceRefreshController<Workspace> | null>(null);
   const {
     imageAttachments,
     repositories,
@@ -1013,7 +1020,6 @@ function App() {
     gitActionInFlightRef,
     gitOperationInFlightWorkspaceIdsRef,
     gitOperationSequenceRef,
-    gitStatusRefreshCache,
     workspaceFileIndexCache,
     workspaceFileIndexRequestCache,
   } = useWorkspaceController();
@@ -1288,6 +1294,11 @@ function App() {
     collaborationModeMasksRef,
     planActionLocksRef,
   } = useRunController();
+  // Only deferred streaming state can be newer than its React snapshot.
+  const deferredSelectedRun = activeRunControlRef.current;
+  if (deferredSelectedRun && pendingRunPublicationsRef.current.has(deferredSelectedRun.clientId)) {
+    runViewRef.current = deferredSelectedRun.runView;
+  }
   const activeRunRegistryVersion = useSyncExternalStore(
     activeRunRegistry.subscribe,
     activeRunRegistry.getSnapshot,
@@ -1326,7 +1337,6 @@ function App() {
   } | null>(null);
   const transcriptLinkErrorRevisionRef = useRef(0);
   const activeViewRef = useRef<AppView>("task");
-  const chatTitleGenerationsInFlightRef = useRef(new Set<number>());
   const workspaceTaskMemories = appServices.workspaceTaskMemories;
   const taskChatTranscriptRef =
     useRef<VirtuosoTaskChatTranscriptHandle | null>(null);
@@ -2068,7 +2078,7 @@ function App() {
   const codexUsageLimits = useCodexUsageLimitsController({
     accounts: analyticsUsageAccounts,
     preferredAccountId: selectedAccountId,
-    active: activeView === "analytics",
+    active: activeView === "analytics" || activeView === "settings",
     load: loadAnalyticsUsageLimits,
   });
   const codexConnected =
@@ -3407,6 +3417,33 @@ function App() {
     });
   }, [defaultProfileAuthenticated, workspaceLocationsKey, workspaces]);
 
+  const performGitRefresh = useStableEvent(performWorkspaceGitStatusRefresh);
+  const refreshPollingDirectories = useStableEvent(refreshVisibleWorkspaceDirectories);
+  const shouldDeferWorkspacePolling = useStableEvent(() =>
+    isTranscriptScrolling() ||
+    previewResizingRef.current ||
+    getDrawerPhase() === "opening" ||
+    getDrawerPhase() === "closing" ||
+    Date.now() - lastForegroundInteractionAtRef.current < BACKGROUND_INTERACTION_GRACE_MS,
+  );
+
+  useEffect(() => {
+    const controller = new WorkspaceRefreshController<Workspace>({
+      refresh: performGitRefresh,
+      refreshDirectories: refreshPollingDirectories,
+      shouldDefer: shouldDeferWorkspacePolling,
+    });
+    workspaceRefreshControllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      workspaceRefreshControllerRef.current = null;
+    };
+  }, [performGitRefresh, refreshPollingDirectories, shouldDeferWorkspacePolling]);
+
+  useEffect(() => {
+    workspaceRefreshControllerRef.current?.update(workspaces, selectedWorkspace?.id ?? null);
+  }, [workspaces, selectedWorkspace?.id, selectedWorkspace?.path]);
+
   useEffect(() => {
     if (!selectedWorkspace) {
       return;
@@ -3415,7 +3452,6 @@ function App() {
     if (activeView !== "analytics") {
       void refreshWorkspaceData(selectedWorkspace.id);
     }
-    void refreshWorkspaceGitStatus(selectedWorkspace);
     if (defaultProfileAuthenticated) {
       void reconcileKanbanNativeTasks(selectedWorkspace).then(() => {
         if (selectedWorkspaceRef.current?.id === selectedWorkspace.id) {
@@ -3498,12 +3534,6 @@ function App() {
   ]);
 
   useEffect(() => {
-    workspaces.forEach((workspace) => {
-      void refreshWorkspaceGitStatus(workspace, { showLoading: false });
-    });
-  }, [workspaceLocationsKey]);
-
-  useEffect(() => {
     const markForegroundInteraction = () => {
       lastForegroundInteractionAtRef.current = Date.now();
     };
@@ -3525,63 +3555,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (workspaces.length === 0) {
-      return;
+    if (!documentVisible) return;
+    flushBatchedCodexNotifications();
+    const pending = new Map(pendingRunPublicationsRef.current);
+    pendingRunPublicationsRef.current.clear();
+    if (pending.size === 0) return;
+    const selected = activeRunControlRef.current;
+    if (selected && pending.has(selected.clientId)) {
+      runViewRef.current = selected.runView;
+      setRunView(selected.runView);
     }
-
-    let cancelled = false;
-    let timeoutId: number | null = null;
-
-    const shouldDeferRefresh = () =>
-      document.visibilityState === "hidden" ||
-      isTranscriptScrolling() ||
-      previewResizingRef.current ||
-      getDrawerPhase() === "opening" ||
-      getDrawerPhase() === "closing" ||
-      Date.now() - lastForegroundInteractionAtRef.current <
-        BACKGROUND_INTERACTION_GRACE_MS;
-
-    const scheduleRefresh = (delay = GIT_STATUS_AUTO_REFRESH_INTERVAL_MS) => {
-      if (cancelled) {
-        return;
-      }
-
-      timeoutId = window.setTimeout(async () => {
-        timeoutId = null;
-        if (shouldDeferRefresh()) {
-          scheduleRefresh(BACKGROUND_REFRESH_RETRY_MS);
-          return;
-        }
-
-        const selectedWorkspaceId = selectedWorkspaceRef.current?.id ?? null;
-        const orderedWorkspaces = [...workspaces].sort(
-          (left, right) =>
-            Number(right.id === selectedWorkspaceId) -
-            Number(left.id === selectedWorkspaceId),
-        );
-
-        for (const workspace of orderedWorkspaces) {
-          if (cancelled || shouldDeferRefresh()) break;
-          await refreshWorkspaceGitStatus(workspace, {
-            showLoading: false,
-            background: true,
-          }).catch(() => undefined);
-          if (cancelled || shouldDeferRefresh()) break;
-          await refreshVisibleWorkspaceDirectories(workspace);
-        }
-        scheduleRefresh();
-      }, delay);
-    };
-
-    scheduleRefresh();
-
-    return () => {
-      cancelled = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-    };
-  }, [expandedDirectoryPaths, expandedWorkspaceIds, workspaces]);
+    setTaskChatEntries((current) => current.map((entry) => {
+      const control = pending.get(entry.clientId);
+      return control ? { ...entry, status: control.runView.status, runView: control.runView } : entry;
+    }));
+  }, [documentVisible]);
 
   useEffect(() => {
     setSelectedRunAliases(selectedActiveRunControl);
@@ -3591,7 +3579,7 @@ function App() {
     const hasActiveRuns = [...activeRunRegistry.values()].some(
       isActiveRunControl,
     );
-    if (!hasActiveRuns) {
+    if (!documentVisible || !hasActiveRuns) {
       return;
     }
 
@@ -3606,7 +3594,7 @@ function App() {
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [activeRunRegistryVersion]);
+  }, [activeRunRegistryVersion, documentVisible]);
 
   useEffect(() => {
     if (unroutedApprovals.length === 0) return;
@@ -3709,7 +3697,7 @@ function App() {
         setUnroutedApprovals(remainingUnroutedApprovals);
       }
       if (profileControls.length > 0) {
-        flushFrameBatchedCodexNotifications();
+        flushBatchedCodexNotifications();
         profileControls.forEach((control) => {
           void persistRunEvent(control, "process", event.status, event);
         });
@@ -3757,19 +3745,15 @@ function App() {
     void appServices.codexEvents
       .subscribe({
         onNotification: ({ accountId, profileKey, message }) =>
-          handleCodexNotification(accountId, profileKey, message),
+          routeCodexNotification(accountId, profileKey, message),
         onServerRequest: ({
           accountId,
           profileKey,
           message,
           requestToken,
         }) =>
-          handleCodexServerRequest(
-            accountId,
-            profileKey,
-            message,
-            requestToken,
-          ),
+          appServices.codexNotificationFrames.dispatch({ profileKey, message }, () =>
+            handleCodexServerRequest(accountId, profileKey, message, requestToken)),
         onProcess: handleCodexProcessEvent,
         onMalformedEvent: (eventName) => {
           console.error(`Rejected malformed native event: ${eventName}`);
@@ -4531,50 +4515,14 @@ function App() {
     return reconciliation;
   }
 
-  function startChatTitleGeneration(request: ChatTitleGenerationRequest) {
-    if (chatTitleGenerationsInFlightRef.current.has(request.chatId)) return;
-    chatTitleGenerationsInFlightRef.current.add(request.chatId);
-
-    void (async () => {
-      try {
-        if (!(await claimChatTitleGeneration(request.chatId))) return;
-        const result = await generateChatTitle({
-          workspacePath: request.workspacePath,
-          accountId: request.accountId,
-          model: request.model,
-          initialPrompt: request.initialPrompt,
-        });
-        const title = sanitizeGeneratedChatTitle(result.title);
-        if (!title) {
-          throw new Error("Codex returned an invalid conversation title");
-        }
-        if (await completeChatTitleGeneration(request.chatId, title)) {
-          updateHistoryChatTitle(request.chatId, title, "complete");
-          await syncSharedChatTitle(request.chatId, title).catch((error) => {
-            console.warn("Could not synchronize the generated Codex title", error);
-          });
-        }
-      } catch (error) {
-        console.warn(
-          `AI chat title generation failed for chat ${request.chatId}; using the prompt-based fallback.`,
-          error,
-        );
-        if (await failChatTitleGeneration(request.chatId).catch(() => false)) {
-          updateHistoryChatTitle(
-            request.chatId,
-            request.fallbackTitle,
-            "failed",
-          );
-          setStatusMessage(
-            "AI title generation failed; using the prompt-based title.",
-          );
-        }
-      } finally {
-        chatTitleGenerationsInFlightRef.current.delete(request.chatId);
-        request.onSettled?.();
-      }
-    })();
-  }
+  const { ensureChatTitleReady, startChatTitleGeneration } = createChatTitleActions({
+    coordinator: appServices.chatTitles,
+    titles: {
+      load: getChatRecord, claim: claimChatTitleGeneration, generate: generateChatTitle,
+      complete: completeChatTitleGeneration, fail: failChatTitleGeneration,
+    },
+    updateHistoryChatTitle, syncSharedChatTitle, applicationNotifications, setStatusMessage,
+  });
 
   async function loadWorkspaceRunHistory(
     workspaceOrId: Workspace | number,
@@ -4648,26 +4596,17 @@ function App() {
     await loadWorkspaceRunHistory(selectedWorkspaceRef.current);
   }
 
-  async function refreshWorkspaceGitStatus(
+  function refreshWorkspaceGitStatus(
     workspace: Workspace,
     options: RefreshWorkspaceGitStatusOptions = {},
   ) {
-    const existingRefresh = gitStatusRefreshCache.current.get(workspace.id);
-    if (existingRefresh) {
-      if (!options.force) {
-        return existingRefresh;
-      }
+    return workspaceRefreshControllerRef.current?.request(workspace, options) ?? Promise.resolve();
+  }
 
-      // A completion refresh must observe the filesystem after the turn. An
-      // in-flight poll may have captured the pre-run state, so wait for it and
-      // issue one new request instead of reusing its potentially stale result.
-      await existingRefresh.catch(() => undefined);
-      return refreshWorkspaceGitStatus(workspace, {
-        ...options,
-        force: true,
-      });
-    }
-
+  async function performWorkspaceGitStatusRefresh(
+    workspace: Workspace,
+    options: RefreshWorkspaceGitStatusOptions = {},
+  ) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
       setGitStatusStates((current) => ({
@@ -4785,12 +4724,8 @@ function App() {
         };
         if (options.background) startTransition(update);
         else update();
-      })
-      .finally(() => {
-        gitStatusRefreshCache.current.delete(workspace.id);
       });
 
-    gitStatusRefreshCache.current.set(workspace.id, refresh);
     return refresh;
   }
 
@@ -6174,6 +6109,7 @@ function App() {
     options: { cleanupInteraction?: boolean } = {},
   ) {
     if (activeRunRegistry.get(control.clientId) !== control) return;
+    if (control.threadId) appServices.codexNotificationFrames.reset(streamRunKey(control.profileKey, { params: { threadId: control.threadId } }));
     if (control.runView.status === "completed") {
       setRunInteractionState(control, "completed");
       appServices.runCoordinator.tryTransition(control.clientId, "completing");
@@ -6529,8 +6465,8 @@ function App() {
     }
   }
 
-  function saveSubagentRecord(record: SubagentRecord) {
-    subagentStore.upsert(record);
+  function saveSubagentRecord(record: SubagentRecord, deferPublication = false) {
+    subagentStore.upsert(record, { deferPublication });
     if (record.runId === null) return;
     void upsertRunSubagent(record).catch((error) => {
       console.error("Could not persist subagent lifecycle", error);
@@ -6765,7 +6701,7 @@ function App() {
       updatedAt: now,
       completedAt: terminal ? record.completedAt ?? now : null,
     };
-    saveSubagentRecord(next);
+    saveSubagentRecord(next, shouldFrameBatchCodexMessage(message));
     return next;
   }
 
@@ -7013,6 +6949,7 @@ function App() {
   function updateRunControlView(
     control: ActiveRunControl,
     updater: (current: RunViewState) => RunViewState,
+    { publish = true }: { publish?: boolean } = {},
   ) {
     const nextRunView = updater(control.runView);
     control.runView = nextRunView;
@@ -7025,8 +6962,13 @@ function App() {
     }
     if (activeRunControlRef.current === control) {
       runViewRef.current = nextRunView;
-      setRunView(nextRunView);
+      if (publish) setRunView(nextRunView);
     }
+    if (!publish) {
+      pendingRunPublicationsRef.current.set(control.clientId, control);
+      return nextRunView;
+    }
+    pendingRunPublicationsRef.current.delete(control.clientId);
     setTaskChatEntries((current) =>
       current.map((entry) =>
         entry.clientId === control.clientId
@@ -7448,7 +7390,7 @@ function App() {
       );
     }
 
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
 
     if (kanbanStopRequest) {
@@ -8092,10 +8034,11 @@ function App() {
     let createdChatId: number | null = null;
     let incompleteBindings: KanbanGitBinding[] = [];
     try {
+      const sourceChat = await ensureChatTitleReady(dialog.chat.id, workspace.path);
       const created = await createChat({
         workspaceId: dialog.chat.workspace_id,
         accountId: dialog.chat.account_id,
-        title: `${dialog.chat.title} continuation`,
+        title: `${sourceChat.title} continuation`,
         status: "starting",
         continuedFromChatId: dialog.chat.id,
         continuationKind: "worktree",
@@ -8108,7 +8051,7 @@ function App() {
         !findRunControlByChat(dialog.chat.workspace_id, dialog.chat.id);
       const result = await provisionKanbanGit({
         cardId: `chat-${created.id}`,
-        cardSlug: dialog.chat.title,
+        cardSlug: sourceChat.title,
         includeDirty: includeDirtyChanges,
         repositories: dialog.repositories.map((repository) => ({
           repositoryPath: repository.path,
@@ -9562,7 +9505,6 @@ function App() {
         directoryRequestCache.current.delete(key);
       }
     }
-    gitStatusRefreshCache.current.delete(workspace.id);
     workspaceFileIndexCache.current.delete(workspace.id);
     workspaceFileIndexRequestCache.current.delete(workspace.id);
   }
@@ -9699,11 +9641,11 @@ function App() {
     try {
       await checkoutGitBranch(selectedWorkspace.path, branch, repositoryPath);
       await refreshBranches(selectedWorkspace, repositoryPath);
-      await refreshWorkspaceGitStatus(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace, { force: true });
       setStatusMessage(`Working on ${selectedWorkspace.label} at ${branch}.`);
     } catch (error) {
       await refreshBranches(selectedWorkspace, repositoryPath);
-      await refreshWorkspaceGitStatus(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace, { force: true });
       setStatusMessage(
         `Could not switch to ${branch}: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -9790,10 +9732,11 @@ function App() {
 
     try {
       await checkoutGitBranch(workspace.path, branch, repositoryPath);
+      await refreshWorkspaceGitStatus(workspace, { showLoading: false, force: true });
       return true;
     } catch (error) {
       await refreshBranches(workspace, repositoryPath);
-      await refreshWorkspaceGitStatus(workspace);
+      await refreshWorkspaceGitStatus(workspace, { force: true });
       setStatusMessage(
         `Could not switch to ${branch}: ${
           error instanceof Error ? error.message : String(error)
@@ -12061,9 +12004,8 @@ function App() {
     }
     ensureRunControlActive(runControl);
 
-    snapshot.contextFiles = await prepareContextImageFiles(
-      snapshot.contextFiles,
-      imageAttachments,
+    snapshot.contextFiles = await prepareRunContextImages(
+      runControl, snapshot.promptText, snapshot.contextFiles,
     );
     snapshot.executionSettings = createRunExecutionSettings({
       ...snapshot.executionSettings,
@@ -12232,7 +12174,7 @@ function App() {
       await softDeleteRun(supersededRunId);
       ensureRunControlActive(runControl);
     }
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
     runControl.eventSequence = 0;
     updateTaskChatEntryIds(runControl.clientId, {
@@ -12524,14 +12466,9 @@ function App() {
       selectedSkills,
       selectedSkills.length ? await getCodexSkills(snapshot.profileKey, snapshot.accountId, true) : [],
     );
-    const text = snapshot.promptText;
-    const input = buildCodexTurnInput(text, snapshot.contextFiles, skills);
-    let { additionalContext, skippedFiles } = await buildAdditionalContext(
-      snapshot.profileKey,
-      snapshot.accountId,
-      snapshot.contextFiles,
-      snapshot.workspace.id,
-    );
+    const context = await resolveRunExecutionContext(runControl, snapshot.promptText, snapshot.contextFiles);
+    let { additionalContext, skippedFiles, files } = await buildAdditionalContext(runControl, context.attachments);
+    const input = buildCodexTurnInput(context.prompt, files, skills);
     if (snapshot.workspaceRepositoryContext) {
       additionalContext = {
         ...(additionalContext ?? {}),
@@ -12571,7 +12508,7 @@ function App() {
         `Skipped context file${skippedFiles.length === 1 ? "" : "s"}: ${skippedFiles.join(", ")}`,
       );
     }
-    return { text, input, additionalContext };
+    return { text: context.prompt, input, additionalContext };
   }
 
   async function registerNativeTaskSourceRoot(
@@ -14225,10 +14162,10 @@ function App() {
       );
       continuationBindings = await reconcileChatRepositoriesForWorkspace({
         chatId: chat.id,
-        chatTitle: chat.title,
         repositories: currentOverview.repositories,
         bindings: continuationBindings,
         dependencies: {
+          ensureTitle: async () => (await ensureChatTitleReady(chat.id, workspace.path)).title,
           expand: expandKanbanGit,
           save: saveChatWorktreeBindings,
           cleanup: cleanupKanbanGit,
@@ -14339,6 +14276,13 @@ function App() {
         workspace.path,
         await listWorkspaceGitStatus(workspace.path, true),
       ).repositories,
+    prepareCardTitle: async (card, repositories, signal) => {
+      const workspace = workspacesRef.current.find((candidate) => candidate.id === card.workspaceId);
+      if (!workspace) throw new Error("The card workspace is no longer available.");
+      return prepareCardBranchTitle(card, repositories, signal, (chatId, prompt, abortSignal) =>
+        ensureChatTitleReady(chatId, workspace.path, prompt, abortSignal, card.model),
+      );
+    },
     loadChat: getChatRecord,
     updateChat,
     getNextTurnIndex: getNextChatTurnIndex,
@@ -14434,22 +14378,17 @@ function App() {
       const steeringItem = await markPromptQueueItemSteering(currentItem.id);
       if (!steeringItem) return true;
       upsertPromptQueueItemInMemory(steeringItem);
-      const preparedFiles = await prepareContextImageFiles(
-        currentItem.snapshot.executionSettings.contextFiles,
-        imageAttachments,
+      const preparedFiles = await prepareRunContextImages(
+        control, currentItem.prompt, currentItem.snapshot.executionSettings.contextFiles,
       );
-      const { additionalContext, skippedFiles } = await buildAdditionalContext(
-        control.profileKey,
-        control.accountId,
-        preparedFiles,
-        currentItem.workspaceId,
-      );
+      const context = await resolveRunExecutionContext(control, currentItem.prompt, preparedFiles);
+      const { additionalContext, skippedFiles, files } = await buildAdditionalContext(control, context.attachments);
       const selectedSkills = currentItem.snapshot.executionSettings.selectedSkills;
       const skills = resolveSelectedSkills(
         selectedSkills,
         selectedSkills.length ? await getCodexSkills(control.profileKey, control.accountId, true) : [],
       );
-      flushFrameBatchedCodexNotifications();
+      flushBatchedCodexNotifications();
       updateRunControlView(control, (current) => addSteerPrompt(current, {
         id: steerEventId,
         text: currentItem.prompt,
@@ -14464,7 +14403,7 @@ function App() {
           threadId: control.threadId,
           expectedTurnId: control.turnId,
           clientUserMessageId: currentItem.clientMessageId,
-          input: buildCodexTurnInput(currentItem.prompt, preparedFiles, skills),
+          input: buildCodexTurnInput(context.prompt, files, skills),
           additionalContext,
         },
       );
@@ -15792,51 +15731,52 @@ function App() {
     );
   }
 
-  async function buildAdditionalContext(
-    profileKey: CodexProfileKey,
-    accountId: number,
-    files: ComposerContextFile[],
-    workspaceId: number,
+  async function resolveRunExecutionContext(
+    control: ActiveRunControl, prompt: string, files: ComposerContextFile[],
   ) {
-    const additionalContext: Record<string, AdditionalContextEntry> = {};
-    const errors = new Map<string, string>();
-    const skippedFiles: string[] = [];
-
-    for (const file of files.filter((file) => !isImageContextFile(file))) {
-      try {
-        const content = await readCodexFileForProfile(
-          profileKey,
-          accountId,
-          file.path,
-        );
-        additionalContext[`file:${file.path}`] = {
-          kind: "untrusted",
-          value: `File: ${file.path}\n\n${content}`,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.set(file.path, message);
-        skippedFiles.push(file.name);
-      }
+    const bindings = control.kanbanAttempt
+      ? await loadKanbanGitBindings(control.kanbanAttempt.cardId)
+      : control.chatId !== null ? await listChatWorktreeBindings(control.chatId) : [];
+    ensureRunControlActive(control);
+    if (control.kanbanAttempt && bindings.length === 0) {
+      throw new Error("The card worktree bindings are unavailable, so file references cannot be resolved.");
     }
+    return resolveExecutionContext(prompt, files, bindings);
+  }
 
-    const rememberedFiles =
-      workspaceTaskMemories.records[workspaceId]?.contextFiles ?? files;
-    updateRememberedWorkspaceComposer(workspaceId, {
-      contextFiles: rememberedFiles.map((file) =>
-        isImageContextFile(file)
-          ? { ...file, status: "ready", error: null }
-          : errors.has(file.path)
-            ? { ...file, status: "error", error: errors.get(file.path) }
-            : { ...file, status: "ready", error: null },
-      ),
+  async function prepareRunContextImages(
+    control: ActiveRunControl, prompt: string, files: ComposerContextFile[],
+  ) {
+    const { attachments } = await resolveRunExecutionContext(control, prompt, files);
+    // Repository attachments are prepared from the current worktree at payload
+    // time. Keep their original identity in saved settings and the composer.
+    const external = await prepareContextImageFiles(
+      attachments.filter((attachment) => !attachment.worktree).map(({ file }) => file), imageAttachments,
+    );
+    let index = 0;
+    return attachments.map(({ original, worktree }) => worktree ? original : external[index++]);
+  }
+
+  async function buildAdditionalContext(
+    control: ActiveRunControl,
+    attachments: ReturnType<typeof resolveExecutionContext>["attachments"],
+  ) {
+    const result = await readExecutionFileContext(attachments, {
+      readFile: (path) => readCodexFileForProfile(control.profileKey, control.accountId, path),
+      prepareImage: async (file) => (await prepareContextImageFiles([file], imageAttachments))[0],
     });
-
-    return {
-      additionalContext:
-        Object.keys(additionalContext).length > 0 ? additionalContext : null,
-      skippedFiles,
-    };
+    ensureRunControlActive(control);
+    const rememberedFiles = workspaceTaskMemories.records[control.workspaceId]?.contextFiles
+      ?? attachments.map(({ original }) => original);
+    updateRememberedWorkspaceComposer(control.workspaceId, {
+      contextFiles: rememberedFiles.map((file) => ({
+        ...file,
+        status: result.errors.has(file.path) ? "error" : "ready",
+        error: result.errors.get(file.path) ?? null,
+      })),
+    });
+    if (result.attachmentError) throw result.attachmentError;
+    return result;
   }
 
   async function handleAccountLoginCompleted(
@@ -15906,14 +15846,15 @@ function App() {
     }
   }
 
-  function flushFrameBatchedCodexNotifications() {
-    const pending = appServices.codexNotificationFrames.drain();
-    if (pending.length === 0) {
-      return runViewRef.current;
-    }
+  function flushBatchedCodexNotifications() {
+    applyStreamNotifications(appServices.codexNotificationFrames.drain());
+    return runViewRef.current;
+  }
+
+  function applyStreamNotifications(pending: StreamNotification[]) {
     const messagesByControl = new Map<ActiveRunControl, CodexMessage[]>();
-    pending.forEach(({ profileKey, message }) => {
-      const control = findRunControlForMessage(profileKey, message);
+    pending.forEach(({ profileKey, message, ownerId }) => {
+      const control = ownerId ? activeRunRegistry.get(ownerId) : findRunControlForMessage(profileKey, message);
       if (!control) return;
       const messages = messagesByControl.get(control) ?? [];
       messages.push(message);
@@ -15923,18 +15864,19 @@ function App() {
       const coalesced = coalesceFrameBatchedCodexMessages(messages);
       updateRunControlView(control, (current) =>
         coalesced.reduce(applyCodexMessage, current),
+        { publish: isDocumentVisible() },
       );
     });
-    return runViewRef.current;
   }
 
-  function queueFrameBatchedCodexNotification(
+  function queueBatchedCodexNotification(
     profileKey: CodexProfileKey,
     message: CodexMessage,
+    ownerId: string,
   ) {
     appServices.codexNotificationFrames.enqueue(
-      { profileKey, message },
-      flushFrameBatchedCodexNotifications,
+      { profileKey, message, ownerId },
+      applyStreamNotifications,
     );
   }
 
@@ -16712,6 +16654,17 @@ function App() {
     }
   }
 
+  function routeCodexNotification(accountId: number, profileKey: CodexProfileKey, message: CodexMessage) {
+    const control = findRunControlForMessage(profileKey, message);
+    const threadId = readCodexMessageRunIdentity(message).threadId;
+    if (control?.runId && (!threadId || threadId === control.threadId)) {
+      queueBufferedRunEvent(control, "notification", message.method ?? null, message);
+      appServices.codexNotificationFrames.recorded.add(message);
+    }
+    return appServices.codexNotificationFrames.dispatch({ profileKey, message }, () =>
+      handleCodexNotification(accountId, profileKey, message));
+  }
+
   async function handleCodexNotification(
     accountId: number,
     profileKey: CodexProfileKey,
@@ -17150,16 +17103,23 @@ function App() {
     applyInteractionLifecycleNotification(control, method, params);
 
     if (shouldFrameBatchCodexMessage(message)) {
-      queueBufferedRunEvent(control, "notification", method, message);
-      queueFrameBatchedCodexNotification(profileKey, message);
+      if (!appServices.codexNotificationFrames.recorded.has(message)) {
+        queueBufferedRunEvent(control, "notification", method, message);
+      }
+      queueBatchedCodexNotification(profileKey, message, control.clientId);
+      appServices.codexNotificationFrames.applied(message);
       return;
     }
 
-    flushFrameBatchedCodexNotifications();
+    const draining = appServices.codexNotificationFrames.before({ profileKey, message });
+    if (draining) {
+      await draining;
+      if (activeRunRegistry.get(control.clientId) !== control) return;
+    }
 
     let nextRunView = updateRunControlView(control, (current) => {
       let next = applyCodexMessage(current, message);
-      if (intermediateGoalTurnCompleted) {
+      if (intermediateGoalTurnCompleted || (method === "turn/interrupted" && control.acceptsThreadContinuation && goalKeepsRunOpen(control.goal))) {
         next = {
           ...next,
           status: "running",
@@ -17183,6 +17143,7 @@ function App() {
         nextRunView.nativePlan.mode === "plan" &&
         (control.intent === "plan" || control.intent === "plan-revision"),
     );
+    appServices.codexNotificationFrames.applied(message);
     const blockedNoToolError =
       terminalStatus === "completed" &&
       control.kanbanAttempt &&
@@ -17268,7 +17229,8 @@ function App() {
         }
       }
     }
-    await persistRunEvent(control, "notification", method, message);
+    if (appServices.codexNotificationFrames.recorded.has(message)) await flushBufferedRunEvents();
+    else await persistRunEvent(control, "notification", method, message);
 
     if (persistedKanbanStatus) {
       const completedPlan =
@@ -17567,7 +17529,7 @@ function App() {
       setApprovalSafetyWarning(warning);
       return;
     }
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
     const {
       threadId: requestThreadId,
       turnId: requestTurnId,
@@ -20549,6 +20511,7 @@ function App() {
   });
   const settingsViewBindings = useSettingsViewBindings({
     model: {
+      usage: codexUsageLimits.settingsModel,
       dragRegion: selfWindowDragRegion,
       computerUseEnabled,
       browserPreferences,
@@ -20577,6 +20540,7 @@ function App() {
       showLogout,
     },
     actions: {
+      usage: codexUsageLimits.settingsActions,
       setComputerUseEnabled,
       setBrowserAskWhereToSave,
       chooseBrowserDownloadLocation: () => {

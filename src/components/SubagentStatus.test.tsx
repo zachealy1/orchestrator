@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React, { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -130,4 +130,24 @@ describe("SubagentStatus", () => {
       "1 needs attention",
     );
   });
+});
+
+it("pauses the open subagent duration clock while hidden and catches up on return", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-29T10:00:00.000Z"));
+  let visible = true;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visible ? "visible" : "hidden");
+  const { unmount } = render(<SubagentStatus records={[record("active", "running")]} open onOpenChange={vi.fn()} onInspect={vi.fn()} />);
+  const region = screen.getByRole("region", { name: "Subagents" });
+  const before = region.textContent;
+  act(() => { visible = false; document.dispatchEvent(new Event("visibilitychange")); });
+  expect(vi.getTimerCount()).toBe(0);
+  act(() => vi.advanceTimersByTime(10_000));
+  expect(region.textContent).toBe(before);
+  act(() => { visible = true; document.dispatchEvent(new Event("visibilitychange")); });
+  expect(region.textContent).not.toBe(before);
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  visibility.mockRestore();
+  vi.useRealTimers();
 });

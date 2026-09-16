@@ -916,7 +916,7 @@ describe("Application runtime scenarios 8", () => {
       });
 
       await user.click(
-        within(screen.getByLabelText("Run summary")).getByRole("link", {
+        within(await screen.findByLabelText("Run summary")).getByRole("link", {
           name: "hello-world.txt",
         }),
       );
@@ -971,7 +971,7 @@ describe("Application runtime scenarios 8", () => {
       });
 
       await user.click(
-        within(screen.getByLabelText("Run summary")).getByRole("link", {
+        within(await screen.findByLabelText("Run summary")).getByRole("link", {
           name: "hello-world.txt",
         }),
       );
@@ -1053,7 +1053,7 @@ describe("Application runtime scenarios 8", () => {
       });
 
       await user.click(
-        within(screen.getByLabelText("Run summary")).getByRole("link", {
+        within(await screen.findByLabelText("Run summary")).getByRole("link", {
           name: "hello-world.txt",
         }),
       );
