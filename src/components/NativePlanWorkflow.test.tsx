@@ -373,7 +373,7 @@ describe("native Plan transcript workflow", () => {
     const onAnswerUserInput = vi.fn();
     renderTurn(entry, { onAnswerUserInput });
 
-    const metrics = screen.getByLabelText("Run metrics");
+    const metrics = screen.getByLabelText("Run trace");
     const plan = screen.getByLabelText("Codex plan");
     const streamedOutput = screen.getByText("Prepared the implementation plan");
     expect(

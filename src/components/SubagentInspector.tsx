@@ -1,13 +1,12 @@
+import { ActivityTimeline, ActivityDisclosure, activityStatusLabel } from "./TranscriptActivity";
+import { subagentTimeline } from "../lib/subagentTimeline";
+import { useDocumentVisible } from "../shared/documentVisibility";
 import {
-  BrainCircuit,
   Check,
-  FileCode2,
   LoaderCircle,
-  MessageSquareText,
   RefreshCw,
   Send,
   Square,
-  TerminalSquare,
   X,
 } from "lucide-react";
 import {
@@ -20,9 +19,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
+import { StreamingMarkdown } from "./StreamingText";
 import type { Components } from "react-markdown";
-import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import { Virtuoso } from "react-virtuoso";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import { emptyRunView, type RunViewState } from "../lib/codexEventReducer";
@@ -32,8 +30,8 @@ import {
   type SubagentRecord,
   type SubagentInstruction,
   type SubagentTranscript,
-  type SubagentTranscriptItem,
   type SubagentTranscriptTurn,
+  type SubagentTranscriptItem,
 } from "../lib/subagents";
 import { useAppServices } from "../runtime/AppServices";
 import type {
@@ -47,7 +45,6 @@ import {
 } from "./TaskChatTurn";
 import { statusLabel, SubagentStatusIcon } from "./SubagentStatus";
 import {
-  transcriptMarkdownUrlTransform,
   TranscriptMarkdownImage,
 } from "./TranscriptMarkdownImage";
 
@@ -112,6 +109,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   onSteer,
   onStop,
 }: Props) {
+  const documentVisible = useDocumentVisible();
   const { subagents, subagentTranscripts } = useAppServices();
   const records = useConversationSubagents(subagents, conversationKey);
   const record =
@@ -135,7 +133,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   recordRef.current = record;
 
   useEffect(() => {
-    if (!record) return;
+    if (!documentVisible || !record) return;
     const generation = ++loadGenerationRef.current;
     const cacheKey = transcriptCacheKey(record);
     const cached = subagentTranscripts.get(cacheKey) ?? null;
@@ -176,8 +174,12 @@ export const SubagentInspector = memo(function SubagentInspector({
           );
         });
     }, cached ? 240 : 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadGenerationRef.current += 1;
+    };
   }, [
+    documentVisible,
     onLoadTranscript,
     record?.childTurnId,
     record?.completedAt,
@@ -186,7 +188,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   ]);
 
   useEffect(() => {
-    if (!record || !isActiveSubagentStatus(record.status)) return;
+    if (!documentVisible || !record || !isActiveSubagentStatus(record.status)) return;
     const recordId = record.id;
     const timer = window.setInterval(() => {
       const current = recordRef.current;
@@ -231,7 +233,7 @@ export const SubagentInspector = memo(function SubagentInspector({
         });
     }, ACTIVE_TRANSCRIPT_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [onLoadTranscript, record?.id, record?.status, subagentTranscripts]);
+  }, [documentVisible, onLoadTranscript, record?.id, record?.status, subagentTranscripts]);
 
   const interactionRunView = useMemo(
     () =>
@@ -674,11 +676,11 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
             }`}
           >
             {streamItems.length > 0 ? (
-              <div className="stream-event-list" aria-label="App-server stream">
-                {streamItems.flatMap((item) =>
-                  renderSubagentStreamItem(item),
-                )}
-              </div>
+              <ActivityDisclosure active={isActiveTranscriptTurn(turn.status)}
+                label={activityStatusLabel(turn.status, Math.max(0, (Date.parse(turn.completedAt ?? "") || Date.now()) - (Date.parse(turn.startedAt ?? "") || Date.now())))}
+                attention={<ActivityTimeline items={subagentTimeline(streamItems.filter((item) => item.kind === "activity" && ["failed", "declined", "interrupted", "inProgress", "running"].includes(item.status ?? "")))} />}>
+                <ActivityTimeline active={isActiveTranscriptTurn(turn.status)} items={subagentTimeline(streamItems)} />
+              </ActivityDisclosure>
             ) : null}
             {summaryItems.map((item) => (
               <div
@@ -688,14 +690,8 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
                 }
                 key={item.id}
               >
-                <ReactMarkdown
-                  components={SUBAGENT_MARKDOWN_COMPONENTS}
-                  {...TRANSCRIPT_MARKDOWN_PLUGINS}
-                  skipHtml
-                  urlTransform={transcriptMarkdownUrlTransform}
-                >
-                  {item.text}
-                </ReactMarkdown>
+                <StreamingMarkdown text={item.text} active={isActiveTranscriptTurn(turn.status)}
+                  components={SUBAGENT_MARKDOWN_COMPONENTS} skipHtml />
               </div>
             ))}
           </div>
@@ -810,49 +806,6 @@ function visibleRecordTask(record: SubagentRecord | null) {
 
 function normalizePrompt(prompt: string) {
   return prompt.replace(/\s+/gu, " ").trim();
-}
-
-function renderSubagentStreamItem(item: SubagentTranscriptItem): ReactNode[] {
-  if (item.kind === "assistant") {
-    return [
-      <div className="stream-message" key={item.id}>
-        <ReactMarkdown
-          components={SUBAGENT_MARKDOWN_COMPONENTS}
-          {...TRANSCRIPT_MARKDOWN_PLUGINS}
-          skipHtml
-          urlTransform={transcriptMarkdownUrlTransform}
-        >
-          {item.text}
-        </ReactMarkdown>
-      </div>,
-    ];
-  }
-  if (item.kind === "reasoning") {
-    return item.summaries.map((summary, index) => (
-      <div className="stream-event reasoning" key={`${item.id}:${index}`}>
-        <BrainCircuit size={15} aria-hidden="true" />
-        <span>{summary}</span>
-      </div>
-    ));
-  }
-  if (item.kind !== "activity") return [];
-  const Icon =
-    item.activityKind === "command"
-      ? TerminalSquare
-      : item.activityKind === "file"
-        ? FileCode2
-        : MessageSquareText;
-  return [
-    <div className={`stream-event ${item.activityKind}`} key={item.id}>
-      <Icon size={15} aria-hidden="true" />
-      <span>{item.label}</span>
-      {item.status ? (
-        <span className="subagent-transcript-activity-status">
-          {item.status}
-        </span>
-      ) : null}
-    </div>,
-  ];
 }
 
 function transcriptCacheKey(record: SubagentRecord) {

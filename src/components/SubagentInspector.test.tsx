@@ -390,3 +390,21 @@ describe("SubagentInspector", () => {
     expect(onLoadTranscript).toHaveBeenCalledTimes(2);
   });
 });
+
+it("suspends transcript reads while hidden and reloads the latest revision on return", async () => {
+  const { subagent, onLoadTranscript, services, unmount } = renderInspector("hidden");
+  await screen.findByText("Inspection underway");
+  let visible = true;
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visible ? "visible" : "hidden");
+  act(() => { visible = false; document.dispatchEvent(new Event("visibilitychange")); });
+  vi.useFakeTimers();
+  act(() => services.subagents.replaceConversation("chat:hidden", [{ ...subagent, updatedAt: "2026-07-29T10:02:00.000Z" }]));
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  expect(onLoadTranscript).toHaveBeenCalledTimes(1);
+  act(() => { visible = true; document.dispatchEvent(new Event("visibilitychange")); });
+  await act(async () => vi.advanceTimersByTimeAsync(240));
+  expect(onLoadTranscript).toHaveBeenCalledTimes(2);
+  unmount();
+  visibility.mockRestore();
+  vi.useRealTimers();
+});
