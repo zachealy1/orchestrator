@@ -43,7 +43,7 @@ describe("application shortcut overlays", () => {
 
   it("skips disabled commands during keyboard navigation", async () => {
     const user = userEvent.setup();
-    const available = commands({ "open-chat": false });
+    const available = commands({ "sidebar-chats": false });
     render(
       <ApplicationCommandPalette
         commands={available}
@@ -55,15 +55,15 @@ describe("application shortcut overlays", () => {
     const search = screen.getByRole("combobox", { name: "Search commands" });
     await waitFor(() => expect(search).toHaveFocus());
     expect(
-      screen.getByRole("option", { name: /Open Chat/ }),
+      screen.getByRole("option", { name: /Sidebar: Chats/ }),
     ).toHaveAttribute("aria-disabled", "true");
     expect(
-      screen.getByRole("option", { name: /Open Kanban/ }),
+      screen.getByRole("option", { name: /Sidebar: Files/ }),
     ).toHaveAttribute("aria-selected", "true");
     await user.keyboard("{Enter}");
 
-    const kanban = available.find(({ id }) => id === "open-kanban");
-    expect(kanban?.run).toHaveBeenCalledTimes(1);
+    const files = available.find(({ id }) => id === "sidebar-files");
+    expect(files?.run).toHaveBeenCalledTimes(1);
   });
 
   it("dismisses the palette with Escape", () => {
@@ -90,6 +90,13 @@ describe("application shortcut overlays", () => {
     expect(screen.getByText("Ctrl+N")).toBeInTheDocument();
     expect(screen.getByText("Ctrl+.")).toBeInTheDocument();
     expect(screen.getByText("Ctrl+/")).toBeInTheDocument();
+    for (const [index, label] of [
+      "Sidebar: Chats", "Sidebar: Files", "Sidebar: Priority",
+      "Open Kanban", "Open Chat", "Open Analytics", "Open Plugins",
+    ].entries()) {
+      expect(screen.getByText(label).closest(".keyboard-shortcut-row"))
+        .toHaveTextContent(`Ctrl+${index + 1}`);
+    }
     expect(screen.queryByText("Report a bug")).not.toBeInTheDocument();
   });
 });

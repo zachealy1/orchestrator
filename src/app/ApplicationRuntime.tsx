@@ -20450,7 +20450,13 @@ function App() {
       }
 
       closeApplicationShortcutOverlays();
-      if (commandId === "new-chat") {
+      if (commandId === "sidebar-chats") {
+        sidebar.setMode("chats");
+      } else if (commandId === "sidebar-files") {
+        sidebar.setMode("files");
+      } else if (commandId === "sidebar-priority") {
+        sidebar.setMode("priority");
+      } else if (commandId === "new-chat") {
         setActiveView("task");
         changeWorkspaceSurfaceMode("chat");
         startNewWorkspaceChat();

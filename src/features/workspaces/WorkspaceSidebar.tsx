@@ -35,6 +35,10 @@ import type {
 import type { ChatListItem } from "../conversations/types";
 import { WorkspaceHistoryRow } from "../conversations/WorkspaceHistoryRow";
 import { sortHistoryChatsByActivity } from "../conversations/historyProjection";
+import {
+  applicationCommandAriaShortcut,
+  formatApplicationCommandShortcut,
+} from "../shortcuts/applicationShortcuts";
 import type { SidebarMode } from "./sidebarPreferences";
 import type {
   SidebarHistoryState,
@@ -448,15 +452,16 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         data-tauri-drag-region="false"
       >
         {([
-          ["chats", "Chats", MessageCircle],
-          ["files", "Files", Files],
-          ["priority", "Priority", Clock3],
-        ] as const).map(([mode, label, Icon]) => (
+          ["chats", "Chats", MessageCircle, "sidebar-chats"],
+          ["files", "Files", Files, "sidebar-files"],
+          ["priority", "Priority", Clock3, "sidebar-priority"],
+        ] as const).map(([mode, label, Icon, commandId]) => (
           <button
             key={mode}
             type="button"
             aria-label={label}
-            data-tooltip={label}
+            data-tooltip={`${label} (${formatApplicationCommandShortcut(commandId)})`}
+            aria-keyshortcuts={applicationCommandAriaShortcut(commandId)}
             aria-pressed={model.mode === mode}
             onClick={() => actions.setMode(mode)}
           >
