@@ -49,7 +49,7 @@ describe("async-question interaction", () => {
     controller.observe(control, question("multi", "thread", [{ title: "Which color?", options: ["Blue"] }, { title: "Any constraints?", options: ["Small"] }]));
     render(view());
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous pending interaction" }));
     expect(screen.getByRole("radio", { name: "Blue" })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(deps.steer).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { PendingInteractionNavigator } from "./PendingInteractionNavigator";
 import { AsyncQuestions } from "../features/asyncQuestions/AsyncQuestions";
 import { readableAsyncReply } from "../lib/asyncUserInput";
 import {
@@ -6,7 +7,6 @@ import {
   BrainCircuit,
   Check,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Clock,
@@ -2174,55 +2174,6 @@ function buildUserInputResponse(
     unansweredQuestionIds,
   };
 }
-
-const PendingInteractionNavigator = memo(function PendingInteractionNavigator({
-  index,
-  total,
-  onPrevious,
-  onNext,
-}: {
-  index: number;
-  total: number;
-  onPrevious: () => void;
-  onNext: () => void;
-}) {
-  if (total <= 1) return null;
-  return (
-    <nav
-      className="pending-interaction-navigator"
-      aria-label="Pending interactions"
-    >
-      <button
-        type="button"
-        className="pending-interaction-nav"
-        aria-label="Previous pending interaction"
-        data-tooltip="Previous"
-        disabled={index === 0}
-        onClick={onPrevious}
-      >
-        <ChevronLeft size={15} aria-hidden="true" />
-      </button>
-      <span
-        className="pending-interaction-count"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {index + 1} of {total}
-      </span>
-      <button
-        type="button"
-        className="pending-interaction-nav"
-        aria-label="Next pending interaction"
-        data-tooltip="Next"
-        disabled={index === total - 1}
-        onClick={onNext}
-      >
-        <ChevronRight size={15} aria-hidden="true" />
-      </button>
-    </nav>
-  );
-});
 
 const UserInputQuestionCard = memo(function UserInputQuestionCard({
   entry,

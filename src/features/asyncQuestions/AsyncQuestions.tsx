@@ -1,4 +1,6 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
+import { ArrowRight, Check, Loader2, Minus, SkipForward } from "lucide-react";
+import { PendingInteractionNavigator } from "../../components/PendingInteractionNavigator";
 import type { RunViewState } from "../../lib/codexEventReducer";
 import { asyncMessageFields, asyncQuestions, parseAsyncReplies, type AsyncAgentMessage } from "../../lib/asyncUserInput";
 import { AsyncQuestionController, type QuestionGroup } from "./AsyncQuestionController";
@@ -41,45 +43,66 @@ function QuestionPanel({ group, controller }: { group: QuestionGroup; controller
   const q = group.questions.find(q => q.id === group.selectedId)!;
   const index = group.pageIds.indexOf(q.id);
   const freeText = !q.options.includes(q.draft);
-  return <form className="approval async-question-panel" aria-label="Answer agent question"
+  const hasNext = index < group.pageIds.length - 1;
+  const submitLabel = group.submitting ? "Sending…" : hasNext ? "Next" : "Submit answer";
+  return <form className={`approval native-user-input async-question-panel${group.pageIds.length > 1 ? " has-question-navigator" : ""}`} aria-label="Answer agent question"
     data-agent-notification-target="user-input" data-agent-notification-id={q.id}
     onPointerDown={() => controller.interact(group.key)} onFocusCapture={() => controller.interact(group.key)}
     onKeyDown={event => {
       if (event.key === "Escape") { event.preventDefault(); controller.minimize(group.key); }
     }}
     onSubmit={event => { event.preventDefault(); void controller.submit(group.key); }}>
-    <header><span>Question {index + 1} of {group.pageIds.length}</span>
-      <button type="button" aria-label="Minimize question" onClick={() => controller.minimize(group.key)}>Minimize</button>
-    </header>
+    <div className="async-question-utilities">
+      <PendingInteractionNavigator index={index} total={group.pageIds.length} disabled={group.submitting}
+        onPrevious={() => controller.select(group.key, group.pageIds[index - 1])}
+        onNext={() => controller.select(group.key, group.pageIds[index + 1])} />
+      <button type="button" className="native-plan-icon-action" aria-label="Minimize question"
+        data-tooltip="Minimize question" onClick={() => controller.minimize(group.key)}>
+        <Minus size={15} aria-hidden="true" />
+      </button>
+    </div>
     <fieldset disabled={group.submitting}>
       <legend>{q.title}</legend>
-      <div className="native-user-input-options">
+      {q.options.length ? <div className="native-user-input-options">
         {q.options.map((option, optionIndex) => <label className={`native-user-input-option${q.draft === option ? " selected" : ""}`} key={`${optionIndex}:${option}`}>
-          <input type="radio" name={`${group.key}:${q.id}`} checked={q.draft === option}
+          <input className="native-user-input-control" type="radio" name={`${group.key}:${q.id}`} checked={q.draft === option}
             onChange={() => controller.edit(group.key, q.id, option)} />
-          <span>{option}</span>
+          <span className="native-user-input-radio" aria-hidden="true" />
+          <span className="native-user-input-option-label">{option}</span>
         </label>)}
-      </div>
-      <label className="async-question-freeform">{q.options.length ? "Your own answer" : "Your answer"}
-        <textarea aria-label={`Your answer: ${q.title}`} value={freeText ? q.draft : ""}
-          placeholder="Type your answer" rows={2}
-          onChange={event => controller.edit(group.key, q.id, event.target.value)}
-          onKeyDown={event => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault(); void controller.submit(group.key);
-            }
-          }} />
-      </label>
+        <label className={`native-user-input-option native-user-input-other-option${freeText ? " selected" : ""}`}>
+          <span className="native-user-input-radio native-user-input-other-indicator" aria-hidden="true" />
+          <QuestionAnswer group={group} controller={controller} />
+        </label>
+      </div> : <QuestionAnswer group={group} controller={controller} />}
     </fieldset>
     {group.error ? <p role="alert" className="native-user-input-error">{group.error}</p> : null}
-    <footer>
-      <button type="button" disabled={group.submitting} onClick={() => controller.skip(group.key)}>Skip</button>
-      {index > 0 ? <button type="button" disabled={group.submitting} onClick={() => controller.select(group.key, group.pageIds[index - 1])}>Back</button> : null}
-      <button type="submit" disabled={group.submitting || (index === group.pageIds.length - 1 && !group.questions.some(question => group.pageIds.includes(question.id) && question.draft.trim()))}>
-        {group.submitting ? "Sending…" : index < group.pageIds.length - 1 ? "Next" : "Submit answer"}
+    <footer className="async-question-actions">
+      <button type="button" className="native-plan-icon-action" aria-label="Skip" data-tooltip="Skip"
+        disabled={group.submitting} onClick={() => controller.skip(group.key)}>
+        <SkipForward size={15} aria-hidden="true" />
+      </button>
+      <button type="submit" className="native-plan-icon-action implement" aria-label={submitLabel} data-tooltip={submitLabel}
+        disabled={group.submitting || (!hasNext && !group.questions.some(question => group.pageIds.includes(question.id) && question.draft.trim()))}>
+        {group.submitting ? <Loader2 className="spin" size={15} aria-hidden="true" /> : hasNext ? <ArrowRight size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
       </button>
     </footer>
   </form>;
+}
+
+function QuestionAnswer({ group, controller }: { group: QuestionGroup; controller: AsyncQuestionController }) {
+  const q = group.questions.find(q => q.id === group.selectedId)!;
+  const hasOptions = q.options.length > 0;
+  return <textarea className={hasOptions ? "native-user-input-other" : "async-question-answer-input"}
+    aria-label={`Your answer: ${q.title}`} value={q.options.includes(q.draft) ? "" : q.draft}
+    placeholder={hasOptions ? "None of the above - type your instructions" : "Type your answer"}
+    rows={hasOptions ? 1 : 2} spellCheck
+    onChange={event => controller.edit(group.key, q.id, event.target.value)}
+    onKeyDown={event => {
+      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+        event.preventDefault(); void controller.submit(group.key);
+      }
+    }} />;
 }
 
 /** The inspector already displays native reply messages; avoid duplicating them in its live panel. */
