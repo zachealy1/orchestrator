@@ -38,6 +38,13 @@
   padding: 8px 10px;
 }
 
+.gitlab-connect-form input:focus,
+.gitlab-connect-form input:focus-visible {
+  border-color: var(--color-divider);
+  outline: none;
+  box-shadow: none;
+}
+
 .gitlab-sign-in-row {
   border-block: 1px solid var(--color-divider);
   padding-block: 12px;
