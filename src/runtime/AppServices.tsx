@@ -1,3 +1,4 @@
+import { InstallationActivityController } from "../features/installationActivity/InstallationActivityController";
 import {
   createContext,
   useContext,
@@ -33,6 +34,7 @@ export type CachedTranscriptState = {
 };
 
 export class AppServices {
+  readonly installationActivity = new InstallationActivityController();
   readonly database = new FrontendDatabase();
   readonly repositories = createAppRepositories(this.database);
   readonly codexEvents = new CodexEventRouter();
@@ -100,6 +102,7 @@ export class AppServices {
   }
 
   dispose() {
+    this.installationActivity.dispose();
     this.database.dispose();
     this.codexEvents.dispose();
     this.runCoordinator.dispose();

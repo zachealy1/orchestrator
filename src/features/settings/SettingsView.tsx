@@ -1,3 +1,4 @@
+import { InstallationActivitySettings } from "../installationActivity/InstallationActivityProvider";
 import {
   Bell,
   Check,
@@ -861,6 +862,8 @@ export const SettingsView = memo(function SettingsView({
           </div>
         </section>
       ) : null}
+
+      {matchesSettings("privacy", "activity", "posthog", "share installation activity") ? <InstallationActivitySettings /> : null}
 
       {matchesSettings("about", "orchestrator", "app version", appVersion.toLowerCase()) ? (
         <section
