@@ -1773,7 +1773,7 @@ button.account-switcher-item:hover:not(:disabled) {
   min-height: 40px;
   padding: 10px 7px;
   border: 0;
-  border-radius: 4px 4px 0 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--color-text-secondary);
   box-shadow: none;
@@ -1782,7 +1782,7 @@ button.account-switcher-item:hover:not(:disabled) {
 }
 .sidebar-mode-selector button:hover:not(:disabled),
 .sidebar-mode-selector button:active:not(:disabled) {
-  background: rgb(var(--surface-muted-rgb) / 0.16);
+  background: var(--panel-strong);
   color: var(--color-text);
   transform: none;
 }
