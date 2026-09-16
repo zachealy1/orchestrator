@@ -3,6 +3,7 @@ import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { trapDialogFocus } from "../../shared/dialogFocus";
 import type { UsageResetConfirmation } from "../analytics/useCodexUsageResetController";
+import { usageResetExpiry, usageResetTitle } from "./usageResetPresentation";
 
 export function UsageResetDialog({
   confirmation,
@@ -25,17 +26,14 @@ export function UsageResetDialog({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    const refreshButton = previousFocus?.closest(".settings-account-usage")
+      ?.querySelector<HTMLElement>('button[aria-label="Refresh account usage"]');
     cancelRef.current?.focus({ preventScroll: true });
     return () => {
       window.requestAnimationFrame(() => {
-        if (!previousFocus?.isConnected) return;
-        const target = previousFocus.matches(":disabled")
-          ? previousFocus
-              .closest(".settings-account-usage")
-              ?.querySelector<HTMLElement>(
-                'button[aria-label="Refresh account usage"]:not(:disabled)',
-              )
-          : previousFocus;
+        const target = previousFocus?.isConnected && !previousFocus.matches(":disabled")
+          ? previousFocus : refreshButton;
+        if (!target?.isConnected || target.matches(":disabled")) return;
         target?.focus({ preventScroll: true });
       });
     };
@@ -79,6 +77,9 @@ export function UsageResetDialog({
             This uses one earned reset for {confirmation.account.label} to reset
             eligible Codex usage limits.
           </p>
+          {confirmation.credit ? <p>
+            {usageResetTitle(confirmation.credit)} · {usageResetExpiry(confirmation.credit)}
+          </p> : null}
           {confirmation.error ? (
             <p className="confirmation-error" role="alert">
               <AlertCircle size={15} aria-hidden="true" />

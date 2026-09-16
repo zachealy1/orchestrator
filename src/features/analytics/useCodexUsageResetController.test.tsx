@@ -4,6 +4,7 @@ import { consumeCodexRateLimitResetCredit } from "../../codexClient";
 import {
   usageAccounts,
   usageLimitsResponse,
+  usageResetCredit,
 } from "../../test/usageLimitsFixture";
 import { useCodexUsageLimitsController } from "./useCodexUsageLimitsController";
 import type {
@@ -25,13 +26,13 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function setup(count: number | null = 2) {
+function setup(count: number | null = 2, response = usageLimitsResponse(count)) {
   const load = vi.fn(
     async (
       _account: AnalyticsUsageAccount,
     ): Promise<CodexUsageLimitsLoadResult> => ({
       kind: "ready",
-      response: usageLimitsResponse(count),
+      response,
       planType: "plus",
     }),
   );
@@ -53,6 +54,44 @@ beforeEach(() => {
 });
 
 describe("earned usage resets", () => {
+  it("redeems the selected row and retains its credit ID and request ID after an uncertain result", async () => {
+    const response = usageLimitsResponse(2);
+    response.rateLimitResetCredits!.credits = [usageResetCredit(), usageResetCredit({ id: "reset-two" })];
+    const { result, load } = setup(2, response);
+    await waitFor(() => expect(result.current.settingsModel.reset.canReset).toBe(true));
+    consume.mockRejectedValueOnce(new Error("Connection lost")).mockResolvedValue({ outcome: "alreadyRedeemed" });
+    act(() => result.current.settingsActions.requestReset("reset-two"));
+    expect(result.current.settingsModel.reset.confirmation?.credit?.id).toBe("reset-two");
+    await act(() => result.current.settingsActions.confirmReset());
+    const key = consume.mock.calls[0][2];
+    expect(consume).toHaveBeenLastCalledWith("account:1", 1, key, "reset-two");
+    act(() => result.current.settingsActions.cancelReset());
+    act(() => result.current.settingsActions.requestReset("reset-one"));
+    expect(result.current.settingsModel.reset.confirmation).toBeNull();
+    load.mockResolvedValue({ kind: "ready", response: usageLimitsResponse(0), planType: "plus" });
+    await act(() => result.current.refreshAccount(1));
+    expect(result.current.settingsModel.reset.retryCredit?.id).toBe("reset-two");
+    act(() => result.current.settingsActions.requestReset());
+    await act(() => result.current.settingsActions.confirmReset());
+    expect(consume).toHaveBeenLastCalledWith("account:1", 1, key, "reset-two");
+  });
+
+  it.each(["missing", "expired", "redeemed"])("cannot consume a selected credit that becomes %s before confirmation", async (change) => {
+    const response = usageLimitsResponse(2);
+    response.rateLimitResetCredits!.credits = [usageResetCredit()];
+    const { result, load } = setup(2, response);
+    await waitFor(() => expect(result.current.settingsModel.reset.canReset).toBe(true));
+    act(() => result.current.settingsActions.requestReset("reset-one"));
+    const updated = usageLimitsResponse(2);
+    updated.rateLimitResetCredits!.credits = change === "missing" ? [] : [usageResetCredit(
+      change === "expired" ? { expiresAt: 1 } : { status: "redeemed" },
+    )];
+    load.mockResolvedValue({ kind: "ready", response: updated, planType: "plus" });
+    await act(() => result.current.refreshAccount(1));
+    expect(result.current.settingsModel.reset.canConfirm).toBe(false);
+    await act(() => result.current.settingsActions.confirmReset());
+    expect(consume).not.toHaveBeenCalled();
+  });
   it.each([
     "reset",
     "alreadyRedeemed",
@@ -78,6 +117,7 @@ describe("earned usage resets", () => {
         "account:1",
         1,
         expect.stringMatching(/^[0-9a-f-]{36}$/),
+        undefined,
       );
       expect(load).toHaveBeenCalledTimes(2);
       expect(result.current.state.snapshot?.buckets[0].remainingPercent).toBe(

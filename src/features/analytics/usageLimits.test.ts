@@ -162,14 +162,25 @@ describe("Codex usage-limit normalization", () => {
 });
 
 describe("earned reset credit availability", () => {
+  it("parses individual credits without deriving the count from capped or malformed rows", () => {
+    const credit = { id: "opaque-id", resetType: "codexRateLimits", status: "available", grantedAt: 1_800_000_000, expiresAt: 1_900_000_000, title: "Full reset", description: null };
+    expect(readCodexRateLimitResetCredits({ availableCount: 8, credits: [
+      credit, credit, null, { ...credit, id: " " }, { id: "malformed" },
+      { ...credit, id: "unknown-expiry", expiresAt: 1e99 },
+      { ...credit, id: "no-expiry", expiresAt: null },
+    ] })).toEqual({ availableCount: 8, credits: [
+      credit, { ...credit, id: "unknown-expiry", expiresAt: null },
+      { ...credit, id: "no-expiry", expiresAt: null },
+    ] });
+  });
   it.each([null, undefined, {}, { availableCount: -1 }, { availableCount: 1.5 }, { availableCount: "2" }, { availableCount: Infinity }])("treats absent or invalid availability as unknown: %j", (value) => {
     expect(readCodexRateLimitResetCredits(value)).toBeNull();
   });
   it.each([null, [], [{ id: "one" }]])("uses the authoritative count regardless of detail rows: %j", (credits) => {
-    expect(readCodexRateLimitResetCredits({ availableCount: 3, credits })).toEqual({ availableCount: 3 });
+    expect(readCodexRateLimitResetCredits({ availableCount: 3, credits })).toEqual({ availableCount: 3, credits: Array.isArray(credits) ? [] : null });
   });
   it("preserves zero and integrates availability with rate-limit parsing and notifications", () => {
-    expect(readCodexRateLimitResetCredits({ availableCount: 0 })).toEqual({ availableCount: 0 });
+    expect(readCodexRateLimitResetCredits({ availableCount: 0 })).toEqual({ availableCount: 0, credits: null });
     const response = readCodexAccountRateLimitsResponse({ rateLimits: snapshot(), rateLimitResetCredits: { availableCount: 2, credits: null } });
     expect(response?.rateLimitResetCredits?.availableCount).toBe(2);
     expect(mergeCodexRateLimitUpdate(response, snapshot()).rateLimitResetCredits?.availableCount).toBe(2);

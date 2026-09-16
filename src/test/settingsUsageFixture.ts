@@ -13,6 +13,7 @@ export const emptySettingsUsage: SettingsAccountUsageModel = {
     canReset: false,
     canConfirm: false,
     retrying: false,
+    retryCredit: null,
     pending: false,
     confirmation: null,
     message: null,

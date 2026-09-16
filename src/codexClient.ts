@@ -175,10 +175,12 @@ export async function consumeCodexRateLimitResetCredit(
   profileKey: CodexProfileKey,
   accountId: number,
   idempotencyKey: string,
+  creditId?: string,
 ): Promise<CodexUsageResetResponse> {
   if (!idempotencyKey.trim()) throw new Error("A reset request ID is required.");
+  if (creditId !== undefined && !creditId.trim()) throw new Error("A reset credit ID must not be empty.");
   const method = "account/rateLimitResetCredit/consume";
-  const params = { idempotencyKey };
+  const params = { idempotencyKey, ...(creditId === undefined ? {} : { creditId }) };
   const response = profileKey === "default"
     ? await codexDefaultProfileRpc<CodexUsageResetResponse>(method, params)
     : await codexRpc<CodexUsageResetResponse>(accountId, method, params);

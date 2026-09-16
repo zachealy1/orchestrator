@@ -206,6 +206,19 @@ describe("Codex account login client", () => {
 
 describe("Codex earned reset client", () => {
   beforeEach(() => invokeMock.mockReset());
+  it.each([["default", 0, "codex_default_profile_rpc"], ["account:8", 8, "codex_rpc"]] as const)("passes the selected credit through %s", async (profileKey, accountId, command) => {
+    invokeMock.mockResolvedValue({ outcome: "reset" });
+    await consumeCodexRateLimitResetCredit(profileKey, accountId, "attempt", "opaque-credit");
+    expect(invokeMock).toHaveBeenCalledExactlyOnceWith(command, {
+      ...(accountId === 0 ? {} : { accountId }),
+      method: "account/rateLimitResetCredit/consume",
+      params: { idempotencyKey: "attempt", creditId: "opaque-credit" },
+    });
+  });
+  it("rejects an empty selected credit ID", async () => {
+    await expect(consumeCodexRateLimitResetCredit("default", 0, "attempt", " ")).rejects.toThrow("credit ID");
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
   it.each([["default", 0, "codex_default_profile_rpc"], ["account:8", 8, "codex_rpc"]] as const)("redeems through %s with only an idempotency key", async (profileKey, accountId, command) => {
     invokeMock.mockResolvedValue({ outcome: "reset" });
     await expect(consumeCodexRateLimitResetCredit(profileKey, accountId, "logical-attempt")).resolves.toEqual({ outcome: "reset" });

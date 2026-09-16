@@ -41,9 +41,20 @@ export type CodexRateLimitSnapshot = {
   rateLimitReachedType: CodexRateLimitReachedType | null;
 };
 
+export type CodexRateLimitResetCredit = {
+  id: string;
+  resetType: string;
+  status: string;
+  grantedAt: number | null;
+  expiresAt: number | null;
+  title: string | null;
+  description: string | null;
+};
+
 export type CodexRateLimitResetCredits = {
   // Detail rows may be omitted or capped; this count is authoritative.
   availableCount: number;
+  credits: CodexRateLimitResetCredit[] | null;
 };
 
 export type CodexUsageResetOutcome =
@@ -557,8 +568,34 @@ function readFiniteNumber(value: unknown) {
 export function readCodexRateLimitResetCredits(
   value: unknown,
 ): CodexRateLimitResetCredits | null {
-  const count = readObject(value).availableCount;
-  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
-    ? { availableCount: count }
+  const object = readObject(value);
+  const count = object.availableCount;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
+    return null;
+  const seen = new Set<string>();
+  const credits = Array.isArray(object.credits)
+    ? object.credits.flatMap((value): CodexRateLimitResetCredit[] => {
+        const credit = readObject(value);
+        const id = readString(credit.id);
+        const resetType = readString(credit.resetType);
+        const status = readString(credit.status);
+        if (!id?.trim() || !resetType || !status || seen.has(id)) return [];
+        seen.add(id);
+        return [{
+          id, resetType, status,
+          grantedAt: readResetTimestamp(credit.grantedAt),
+          expiresAt: readResetTimestamp(credit.expiresAt),
+          title: readString(credit.title),
+          description: readString(credit.description),
+        }];
+      })
+    : null;
+  return { availableCount: count, credits };
+}
+
+function readResetTimestamp(value: unknown): number | null {
+  const timestamp = readFiniteNumber(value);
+  return timestamp !== null && Number.isFinite(new Date(timestamp * 1_000).getTime())
+    ? timestamp
     : null;
 }

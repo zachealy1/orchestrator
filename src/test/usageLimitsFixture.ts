@@ -1,6 +1,7 @@
 import type {
   AnalyticsUsageAccount,
   CodexAccountRateLimitsResponse,
+  CodexRateLimitResetCredit,
 } from "../features/analytics/usageLimits";
 
 export const usageAccounts: AnalyticsUsageAccount[] = [
@@ -33,6 +34,14 @@ export function usageLimitsResponse(
       rateLimitReachedType: null,
     },
     rateLimitsByLimitId: null,
-    rateLimitResetCredits: availableCount === null ? null : { availableCount },
+    rateLimitResetCredits: availableCount === null ? null : { availableCount, credits: null },
+  };
+}
+
+export function usageResetCredit(overrides: Partial<CodexRateLimitResetCredit> = {}): CodexRateLimitResetCredit {
+  return {
+    id: "reset-one", resetType: "codexRateLimits", status: "available",
+    grantedAt: 1_800_000_000, expiresAt: 1_900_000_000,
+    title: "Full reset", description: null, ...overrides,
   };
 }

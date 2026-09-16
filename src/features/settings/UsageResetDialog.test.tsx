@@ -15,6 +15,7 @@ import type { UsageResetConfirmation } from "../analytics/useCodexUsageResetCont
 const confirmation: UsageResetConfirmation = {
   account: usageAccounts[0],
   idempotencyKey: "attempt",
+  credit: null,
   status: "confirming",
   error: null,
 };
@@ -117,21 +118,22 @@ describe("usage reset confirmation", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Connection lost");
     expect(screen.getByRole("button", { name: "Retry reset" })).toBeEnabled();
   });
-  it("returns focus to Refresh when the last reset leaves the trigger disabled", async () => {
+  it.each(["disabled", "removed"])("returns focus to Refresh when the redeemed entry is %s", async (state) => {
     const user = userEvent.setup();
     function Harness() {
       const [open, setOpen] = useState(false);
       const [available, setAvailable] = useState(true);
       return <section className="settings-account-usage">
         <button aria-label="Refresh account usage">Refresh</button>
-        <button disabled={!available} onClick={() => setOpen(true)}>Open reset</button>
+        {(available || state === "disabled") && <button disabled={!available} onClick={() => setOpen(true)}>Open reset</button>}
         {open && <UsageResetDialog confirmation={confirmation} canConfirm onCancel={() => setOpen(false)} onConfirm={() => { setAvailable(false); setOpen(false); }} />}
       </section>;
     }
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Open reset" }));
     await user.click(screen.getByRole("button", { name: "Use 1 reset" }));
-    expect(screen.getByRole("button", { name: "Open reset" })).toBeDisabled();
+    if (state === "disabled") expect(screen.getByRole("button", { name: "Open reset" })).toBeDisabled();
+    else expect(screen.queryByRole("button", { name: "Open reset" })).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh account usage" })).toHaveFocus());
   });
 

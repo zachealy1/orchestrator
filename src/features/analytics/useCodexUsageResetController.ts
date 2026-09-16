@@ -3,6 +3,7 @@ import { consumeCodexRateLimitResetCredit } from "../../codexClient";
 import { useStableEvent } from "../../shared/reactRuntime";
 import type {
   AnalyticsUsageAccount,
+  CodexRateLimitResetCredit,
   CodexUsageLimitsAccountState,
   CodexUsageResetOutcome,
 } from "./usageLimits";
@@ -10,6 +11,7 @@ import type {
 export type UsageResetConfirmation = {
   account: AnalyticsUsageAccount;
   idempotencyKey: string;
+  credit: CodexRateLimitResetCredit | null;
   status: "confirming" | "submitting" | "error";
   error: string | null;
 };
@@ -46,7 +48,7 @@ export function useCodexUsageResetController({
   const confirmationRef = useRef(confirmation);
   const submittingRef = useRef(false);
   // Keep uncertain attempts even when their dialog is dismissed and reopened.
-  const retryKeys = useRef(new Map<number, string>());
+  const retryAttempts = useRef(new Map<number, Pick<UsageResetConfirmation, "idempotencyKey" | "credit">>());
   const accountsRef = useRef(accounts);
   accountsRef.current = accounts;
   confirmationRef.current = confirmation;
@@ -60,7 +62,7 @@ export function useCodexUsageResetController({
     !["signed-out", "unsupported"].includes(
       getAccountState(account.accountId).status,
     );
-  const canRequest = (account: AnalyticsUsageAccount | null) => {
+  const canRequest = (account: AnalyticsUsageAccount | null, creditId?: string) => {
     if (
       !account ||
       submittingRef.current ||
@@ -69,12 +71,17 @@ export function useCodexUsageResetController({
     )
       return false;
     const state = getAccountState(account.accountId);
+    const retry = retryAttempts.current.get(account.accountId);
+    const credits = state.snapshot?.raw.rateLimitResetCredits;
+    const credit = credits?.credits?.find((entry) => entry.id === creditId);
+    const available = (credits?.availableCount ?? 0) > 0 &&
+      (creditId === undefined || (credit?.status === "available" &&
+        (credit.expiresAt === null || credit.expiresAt * 1_000 > Date.now())));
     return (
       state.status === "ready" &&
       !state.stale &&
       !state.refreshing &&
-      ((state.snapshot?.raw.rateLimitResetCredits?.availableCount ?? 0) > 0 ||
-        retryKeys.current.has(account.accountId))
+      (retry ? creditId === undefined || creditId === retry.credit?.id : available)
     );
   };
 
@@ -83,23 +90,26 @@ export function useCodexUsageResetController({
       confirmationRef.current = null;
       setConfirmation(null);
     }
-    for (const accountId of retryKeys.current.keys()) {
+    for (const accountId of retryAttempts.current.keys()) {
       if (!accounts.some((account) => account.accountId === accountId))
-        retryKeys.current.delete(accountId);
+        retryAttempts.current.delete(accountId);
     }
   });
 
-  const requestReset = useStableEvent(() => {
+  const requestReset = useStableEvent((creditId?: string) => {
     if (
       !selectedAccount ||
-      !canRequest(selectedAccount) ||
+      !canRequest(selectedAccount, creditId) ||
       confirmationRef.current
     )
       return;
+    const retry = retryAttempts.current.get(selectedAccount.accountId);
+    const credit = retry?.credit ?? getAccountState(selectedAccount.accountId)
+      .snapshot?.raw.rateLimitResetCredits?.credits?.find((entry) => entry.id === creditId) ?? null;
     const attempt: UsageResetConfirmation = {
       account: { ...selectedAccount },
-      idempotencyKey:
-        retryKeys.current.get(selectedAccount.accountId) ?? crypto.randomUUID(),
+      idempotencyKey: retry?.idempotencyKey ?? crypto.randomUUID(),
+      credit,
       status: "confirming",
       error: null,
     };
@@ -113,19 +123,20 @@ export function useCodexUsageResetController({
   });
   const confirmReset = useStableEvent(async () => {
     const attempt = confirmationRef.current;
-    if (!attempt || !canRequest(attempt.account)) return;
-    const { account, idempotencyKey } = attempt;
+    if (!attempt || !canRequest(attempt.account, attempt.credit?.id)) return;
+    const { account, idempotencyKey, credit } = attempt;
     submittingRef.current = true;
     setPending(true);
-    retryKeys.current.set(account.accountId, idempotencyKey);
+    retryAttempts.current.set(account.accountId, { idempotencyKey, credit });
     setConfirmation({ ...attempt, status: "submitting", error: null });
     try {
       const result = await consumeCodexRateLimitResetCredit(
         account.profileKey,
         account.accountId,
         idempotencyKey,
+        credit?.id,
       );
-      retryKeys.current.delete(account.accountId);
+      retryAttempts.current.delete(account.accountId);
       if (isAvailable(account)) {
         setMessages((current) => ({
           ...current,
@@ -146,7 +157,7 @@ export function useCodexUsageResetController({
           message,
         )
       ) {
-        retryKeys.current.delete(account.accountId);
+        retryAttempts.current.delete(account.accountId);
         setUnsupported((current) => new Set(current).add(account.accountId));
         setMessages((current) => ({
           ...current,
@@ -170,8 +181,9 @@ export function useCodexUsageResetController({
 
   const accountId = selectedAccount?.accountId;
   const canReset = canRequest(selectedAccount);
-  const canConfirm = confirmation !== null && canRequest(confirmation.account);
-  const retrying = accountId !== undefined && retryKeys.current.has(accountId);
+  const canConfirm = confirmation !== null && canRequest(confirmation.account, confirmation.credit?.id);
+  const retrying = accountId !== undefined && retryAttempts.current.has(accountId);
+  const retryCredit = accountId === undefined ? null : retryAttempts.current.get(accountId)?.credit ?? null;
   const message =
     accountId === undefined ? null : (messages[accountId] ?? null);
   const state = useMemo(
@@ -179,11 +191,12 @@ export function useCodexUsageResetController({
       canReset,
       canConfirm,
       retrying,
+      retryCredit,
       pending,
       confirmation,
       message,
     }),
-    [canReset, canConfirm, retrying, pending, confirmation, message],
+    [canReset, canConfirm, retrying, retryCredit, pending, confirmation, message],
   );
   const actions = useMemo(
     () => ({ requestReset, cancelReset, confirmReset }),

@@ -1551,6 +1551,6 @@ describe("Settings account usage", () => {
     expect(bindings.selectAccount).not.toHaveBeenCalled();
     view.rerender(<SettingsView model={model({ usage: { ...usage, state: { ...usage.state, status: "unsupported" } } })} actions={bindings} />);
     expect(within(panel).getByText("Earned reset availability is unavailable.")).toBeInTheDocument();
-    expect(within(panel).getByRole("button", { name: "Use 1 reset" })).toBeDisabled();
+    expect(within(panel).queryByRole("button", { name: /Use reset/ })).not.toBeInTheDocument();
   });
 });
