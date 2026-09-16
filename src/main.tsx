@@ -1,3 +1,4 @@
+import { InstallationActivityProvider } from "./features/installationActivity/InstallationActivityProvider";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
@@ -35,7 +36,9 @@ function ApplicationRoot() {
       ) : import.meta.env.VITE_DRAWER_SYNC_PROFILE === "1" ? (
         <DrawerSyncDiagnostics />
       ) : (
-        <App />
+        <InstallationActivityProvider controller={services.installationActivity}>
+          <App />
+        </InstallationActivityProvider>
       )}
       <OrchestratorTooltipLayer />
     </AppServicesProvider>
