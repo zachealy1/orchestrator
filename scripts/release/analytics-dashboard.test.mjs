@@ -7,7 +7,7 @@ import { countQuery, historyQuery } from '../analytics/dashboard.mjs';
 // Only ClickHouse date/aggregate syntax is adapted to SQLite; live setup also validates HogQL.
 test('dashboard counts distinct installations across inclusive UTC windows', () => {
   const queries = [1, 7, 30].map(countQuery).concat(historyQuery).map((query) => query
-    .replaceAll("toDate(now(), 'UTC')", "'2026-09-16'")
+    .replaceAll("toDate(toTimeZone(now(), 'UTC'))", "'2026-09-16'")
     .replace(/'2026-09-16' - INTERVAL (\d+) DAY/g, "date('2026-09-16', '-$1 days')")
     .replaceAll('properties.environment', 'environment')
     .replaceAll('properties.active_date', 'active_date')

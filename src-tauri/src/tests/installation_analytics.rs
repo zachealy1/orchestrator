@@ -79,6 +79,94 @@ fn server(response: &'static str) -> (String, oneshot::Receiver<Value>, oneshot:
 const OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n1";
 const UNAVAILABLE: &str = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
+// Explicit operator smoke test: uses the real native queue/client, disposable local
+// databases, and synthetic IDs. It can never send environment=production.
+#[tokio::test]
+#[ignore = "requires explicit live PostHog ingestion configuration"]
+async fn live_capture_test_environment() {
+    assert_eq!(std::env::var("RUN_POSTHOG_LIVE_TEST").as_deref(), Ok("1"));
+    let token = std::env::var("POSTHOG_TEST_PROJECT_TOKEN").expect("public project token required");
+    assert!(
+        token.starts_with("phc_"),
+        "a public project token is required"
+    );
+    let host = std::env::var("POSTHOG_TEST_HOST").expect("ingestion host required");
+    assert!(matches!(
+        host.as_str(),
+        "https://eu.i.posthog.com" | "https://us.i.posthog.com"
+    ));
+    let configuration = Configuration {
+        endpoint: format!("{host}/i/v0/e/?ip=0"),
+        token,
+        environment: "test".into(),
+    };
+    let now = Utc::now();
+    let mut identities = Vec::new();
+    // Expected distinct counts across today's inclusive UTC windows: 1, 2, 3.
+    for offsets in [vec![0, 1], vec![6, 7], vec![29], vec![30]] {
+        let (database, pool) = database().await;
+        let service = AnalyticsService::new(database.clone(), Some(configuration.clone())).unwrap();
+        for offset in &offsets {
+            let activity = now - chrono::Duration::days(*offset);
+            service.record(activity).await.unwrap();
+            service.record(activity).await.unwrap();
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM installation_active_days")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            offsets.len() as i64
+        );
+        // Reinitialization resumes the existing queue and keeps each original payload.
+        let restarted = AnalyticsService::new(database, Some(configuration.clone())).unwrap();
+        let retry_payload = restarted
+            .next_event(now)
+            .await
+            .unwrap()
+            .unwrap()
+            .payload(&configuration.token);
+        for _ in &offsets {
+            assert!(restarted.send_next(now).await.unwrap());
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM installation_active_days WHERE status = 'sent'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            offsets.len() as i64
+        );
+        // Replay an acknowledged payload exactly, as if its acknowledgement was lost.
+        let response = restarted
+            .client
+            .post(&configuration.endpoint)
+            .json(&retry_payload)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        identities.push(
+            sqlx::query_scalar::<_, String>("SELECT installation_id FROM installation_analytics")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+        );
+    }
+    println!(
+        "POSTHOG_LIVE_FIXTURE={}",
+        json!({
+            "active_date": now.format("%Y-%m-%d").to_string(),
+            "installation_ids": identities,
+            "expected_counts": { "dau": 1, "wau": 2, "mau": 3 },
+            "logical_events": 6,
+            "capture_requests": 10,
+            "environment": "test"
+        })
+    );
+}
+
 #[tokio::test]
 async fn identity_and_daily_records_survive_concurrency_restart_and_opt_out() {
     let (db, pool) = database().await;

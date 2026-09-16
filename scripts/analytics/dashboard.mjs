@@ -1,5 +1,5 @@
 // Saved SQL uses installation IDs directly, never PostHog person merging.
-export const today = "toDate(now(), 'UTC')";
+export const today = "toDate(toTimeZone(now(), 'UTC'))";
 export function countQuery(days) {
   if (![1, 7, 30].includes(days)) throw new Error("Unsupported activity window");
   return `SELECT uniqExact(distinct_id) AS active_installations

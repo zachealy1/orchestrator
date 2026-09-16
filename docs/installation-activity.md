@@ -64,16 +64,44 @@ credentials are added to the app's local token/run analytics.
 
 Run `npm test`, `npm run lint`, `npm run test:release`, `npm run check:release`,
 `npm run build`, and `cargo test --locked --manifest-path src-tauri/Cargo.toml`.
-Native tests use an isolated database and local HTTP servers; they never contact
-PostHog. They cover concurrent initialization, persistence, midnight, backoff,
+Default native tests use an isolated database and local HTTP servers; they never
+contact PostHog. They cover concurrent initialization, persistence, midnight, backoff,
 original retry payloads, expiry, cancellation, and permanent HTTP errors.
 
-For live ingestion verification, build a release with an isolated test project's
-host/token and `ORCHESTRATOR_ANALYTICS_ENVIRONMENT=test`. Use disposable app data.
+One PostHog project is sufficient. Live verification can use the existing project's
+host/token with `ORCHESTRATOR_ANALYTICS_ENVIRONMENT=test`; all operator dashboard
+queries filter to `production`. A separate test project is optional. Use disposable app data.
 Open/focus repeatedly, restart, disable/re-enable, and exercise offline recovery.
 Verify one logical event per UTC date, stable identity, the expected property
 allowlist, no person profile, and no retained client IP or GeoIP properties.
-Do not send fixture installation IDs to the production project.
+Never label fixture events `environment=production`.
+
+The ignored native test `live_capture_test_environment` exercises the actual
+queue and HTTP client with disposable databases and forces `environment=test`.
+To run it explicitly, set `RUN_POSTHOG_LIVE_TEST=1`, `POSTHOG_TEST_HOST`, and
+`POSTHOG_TEST_PROJECT_TOKEN` (a public project token), then run:
+
+```sh
+cargo test --locked --manifest-path src-tauri/Cargo.toml live_capture_test_environment -- --ignored --nocapture
+```
+
+The printed fixture manifest contains synthetic IDs and expected counts for its
+UTC activity date. This check passed against project 275534 on 2026-09-16:
+ten requests, including four exact replays, produced six stored logical events.
+PostHog SQL returned the expected distinct counts: DAU 1, WAU 2, MAU 3.
+All six inspected events retained their original activity dates and stored only
+the three application properties and the two privacy flags; no IP or location
+properties were present. The project's `persons` table contained zero profiles.
+Refreshing all four production dashboard tiles after ingestion kept DAU, WAU,
+and MAU at zero and history empty, confirming that test events are excluded.
+
+Final source validation on 2026-09-16 passed: all 1,472 frontend tests across 211
+files (`--maxWorkers=1`), all 46 release tests, lint/generated bindings/architecture,
+the frontend production build, and `cargo check --release --locked --lib` with
+production analytics explicitly enabled. The seven default native analytics tests
+and the separately invoked live-ingestion test also passed. Packaging, signing,
+and installation/launch smoke testing of the final release artifact remain normal
+release gates; this source review did not produce a signed distribution package.
 
 Counts represent installations, not people. Clearing application data creates a
 new ID; copying that data can share an ID. Device clock errors affect the UTC date.
@@ -85,9 +113,13 @@ not a billing or security audit.
 
 ## Reapplying the dashboard
 
-The dashboard container is [Orchestrator installation activity](https://eu.posthog.com/project/275534/dashboard/957136).
-The title and description are saved; the four tiles and live test-project
-ingestion still need to be applied/verified because browser access was interrupted.
+The live dashboard is [Orchestrator installation activity](https://eu.posthog.com/project/275534/dashboard/957136).
+All four tiles were saved and verified on 2026-09-16. Each query ran successfully
+in PostHog; the production project had no events, so the counts were zero and
+history was empty. The UTC expression uses `toDate(toTimeZone(now(), 'UTC'))`:
+PostHog's HogQL rejects the two-argument form of `toDate`.
+Live ingestion was verified in the same project using only `environment=test`
+events. No additional project or billing change is needed.
 To preview the four saved insight definitions, run
 `node scripts/analytics/setup-dashboard.mjs`.
 To validate the SQL against PostHog and create/update the four tiles idempotently,
