@@ -326,7 +326,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       );
     }
 
-    return entries.map((entry) => renderTreeEntry(workspace, entry, depth));
+    return (
+      <div className="workspace-tree-children" style={treeIndentStyle(depth)}>
+        {entries.map((entry) => renderTreeEntry(workspace, entry, depth))}
+      </div>
+    );
   }
 
   function renderTreeEntry(
@@ -456,7 +460,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             aria-pressed={model.mode === mode}
             onClick={() => actions.setMode(mode)}
           >
-            <Icon size={15} aria-hidden="true" />
+            <Icon size={18} aria-hidden="true" />
           </button>
         ))}
       </div>
