@@ -178,9 +178,16 @@ describe("sidebar modes", () => {
         actions={actions()}
       />,
     );
-    expect(screen.getByTitle("Chat 101")).toBeVisible();
-    expect(screen.queryByTitle("Chat 102")).not.toBeInTheDocument();
-    expect(screen.getByText("app · failed")).toBeVisible();
+    const row = screen.getByRole("button", { name: "Chat 101" });
+    expect(row).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Chat 102" })).not.toBeInTheDocument();
+    expect(row).toHaveAccessibleDescription(
+      `app · failed · ${new Date(chats[0].latest_finished_at).toLocaleString()}`,
+    );
+    expect(row).toHaveAttribute(
+      "data-tooltip",
+      `Chat 101 · app · failed · ${new Date(chats[0].latest_finished_at).toLocaleString()}`,
+    );
     expect(
       screen.queryByRole("button", { name: "Expand app" }),
     ).not.toBeInTheDocument();

@@ -127,8 +127,8 @@ describe("unified application sidebar", () => {
     const { user } = await renderApp();
     await openSidebarChats(user);
     await user.click(screen.getByRole("button", { name: "Expand Second" }));
-    expect(await screen.findByTitle("First workspace chat")).toBeVisible();
-    await user.click(await screen.findByTitle("Second workspace chat"));
+    expect(await screen.findByRole("button", { name: /^First workspace chat/ })).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: /^Second workspace chat/ }));
     expect(await screen.findByText("Second workspace result")).toBeVisible();
     expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute(
       "aria-current",
@@ -157,13 +157,13 @@ describe("unified application sidebar", () => {
     );
     const { user } = await renderApp();
     await user.click(screen.getByRole("button", { name: "Priority" }));
-    await user.click(await screen.findByTitle("Priority conversation"));
+    await user.click(await screen.findByRole("button", { name: /^Priority conversation/ }));
     expect(await screen.findByLabelText("Submitted prompt")).toBeVisible();
-    expect(screen.getByTitle("Priority conversation")).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Priority conversation/ })).toBeVisible();
     await startMockRun(user, "Run it again");
     await waitFor(() =>
       expect(
-        screen.queryByTitle("Priority conversation"),
+        screen.queryByRole("button", { name: /^Priority conversation/ }),
       ).not.toBeInTheDocument(),
     );
     await emitCodexNotification({
@@ -174,7 +174,7 @@ describe("unified application sidebar", () => {
         turn: { id: "turn-1", status: "completed", durationMs: 1000 },
       },
     });
-    expect(await screen.findByTitle("Priority conversation")).toBeVisible();
+    expect(await screen.findByRole("button", { name: /^Priority conversation/ })).toBeVisible();
     const calls = mocks.listPriorityChatsMock.mock.calls.length;
     fireEvent(window, new Event("focus"));
     await waitFor(() =>
@@ -183,8 +183,8 @@ describe("unified application sidebar", () => {
       ),
     );
     expect(
-      within(screen.getByRole("navigation", { name: "Priority" })).getByTitle(
-        "Priority conversation",
+      within(screen.getByRole("navigation", { name: "Priority" })).getByRole(
+        "button", { name: /^Priority conversation/ },
       ),
     ).toBeVisible();
   });

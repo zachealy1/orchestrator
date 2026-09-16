@@ -1,7 +1,6 @@
 import { Loader2 } from "lucide-react";
 import {
   memo,
-  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -17,7 +16,7 @@ export const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
   metadata,
   onOpenContextMenu,
 }: {
-  metadata?: ReactNode;
+  metadata?: string;
   chat: ChatListItem;
   selected: boolean;
   running: boolean;
@@ -28,17 +27,16 @@ export const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
     event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
   ) => void;
 }) {
+  const description = metadata ?? formatHistoryChatMeta(chat);
+
   return (
     <button
       className={`history-run-item ${selected ? "selected" : ""}`}
       type="button"
       aria-pressed={selected}
-      aria-label={
-        unread
-          ? `${chat.title}, unread activity${running ? ", agent running" : ""}`
-          : undefined
-      }
-      title={chat.title}
+      aria-label={`${chat.title}${unread ? ", unread activity" : ""}${running ? ", agent running" : ""}`}
+      aria-description={description}
+      data-tooltip={`${chat.title} · ${description}`}
       onClick={() => onSelect(chat)}
       onContextMenu={(event) => onOpenContextMenu(chat, event)}
       onKeyDown={(event) => {
@@ -55,20 +53,18 @@ export const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
         {unread || running ? (
           <span
             className="history-run-indicators"
-            aria-hidden={unread || undefined}
+            aria-hidden="true"
           >
             {unread ? <span className="history-run-unread-dot" /> : null}
             {running ? (
               <Loader2
                 className="history-run-spinner spin"
                 size={15}
-                aria-label="Agent running"
               />
             ) : null}
           </span>
         ) : null}
       </span>
-      <span>{metadata ?? formatHistoryChatMeta(chat)}</span>
     </button>
   );
 });

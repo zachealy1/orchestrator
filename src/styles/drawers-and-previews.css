@@ -321,7 +321,7 @@ button.history-run-item.disabled {
   align-items: center;
 }
 
-.history-run-list span.history-run-unread-dot {
+.history-run-unread-dot {
   width: 7px;
   min-width: 7px;
   height: 7px;

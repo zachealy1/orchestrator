@@ -2,10 +2,13 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
+  Clock3,
+  Files,
   FileText,
   Folder,
   FolderOpen,
   Loader2,
+  MessageCircle,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -13,7 +16,6 @@ import {
   memo,
   useLayoutEffect,
   useRef,
-  type ReactNode,
   type CSSProperties,
   type RefObject,
 } from "react";
@@ -124,7 +126,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     if (element) element.scrollTop = scrollPositions.current[model.mode];
   }, [model.mode]);
 
-  function renderChat(chat: ChatListItem, metadata?: ReactNode) {
+  function renderChat(chat: ChatListItem, metadata?: string) {
     return (
       <WorkspaceHistoryRow
         key={chat.id}
@@ -188,9 +190,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     );
     return (
       <div className="sidebar-priority" aria-label="Recently finished chats">
-        <p className="sidebar-priority-description">
-          Finished in the last 24 hours
-        </p>
         {model.priority.status === "loading" && chats.length === 0 ? (
           <p role="status" className="workspace-tree-status">
             Loading chats...
@@ -212,27 +211,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         {chats.map((chat) =>
           renderChat(
             chat,
-            <>
-              <span>
-                {
-                  model.workspaces.find(
-                    (workspace) => workspace.id === chat.workspace_id,
-                  )?.label
-                }{" "}
-                · {chat.latest_finished_status}
-              </span>
-              <time
-                dateTime={chat.latest_finished_at}
-                title={new Date(chat.latest_finished_at).toLocaleString()}
-              >
-                {new Date(chat.latest_finished_at).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </time>
-            </>,
+            `${model.workspaces.find((workspace) => workspace.id === chat.workspace_id)?.label ?? ""} · ${chat.latest_finished_status} · ${new Date(chat.latest_finished_at).toLocaleString()}`,
           ),
         )}
       </div>
@@ -464,14 +443,20 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         aria-label="Sidebar mode"
         data-tauri-drag-region="false"
       >
-        {(["chats", "files", "priority"] as const).map((mode) => (
+        {([
+          ["chats", "Chats", MessageCircle],
+          ["files", "Files", Files],
+          ["priority", "Priority", Clock3],
+        ] as const).map(([mode, label, Icon]) => (
           <button
             key={mode}
             type="button"
+            aria-label={label}
+            data-tooltip={label}
             aria-pressed={model.mode === mode}
             onClick={() => actions.setMode(mode)}
           >
-            {mode[0].toUpperCase() + mode.slice(1)}
+            <Icon size={15} aria-hidden="true" />
           </button>
         ))}
       </div>
@@ -482,15 +467,17 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         <span id="workspaces-heading">
           {model.mode === "priority" ? "Priority" : "Workspaces"}
         </span>
-        <button
-          className="workspace-add"
-          type="button"
-          onClick={actions.addWorkspace}
-          aria-label="Add workspace"
-          data-tooltip="Add workspace"
-        >
-          <Plus size={16} aria-hidden="true" />
-        </button>
+        {model.mode !== "priority" ? (
+          <button
+            className="workspace-add"
+            type="button"
+            onClick={actions.addWorkspace}
+            aria-label="Add workspace"
+            data-tooltip="Add workspace"
+          >
+            <Plus size={16} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
 
       <nav
