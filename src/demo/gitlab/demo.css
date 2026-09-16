@@ -1,0 +1,28 @@
+html, body, #root { margin: 0; min-width: 760px; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.gitlab-demo { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.demo-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 30px; border-bottom: 1px solid var(--line); gap: 24px; }
+.demo-brand { display: flex; align-items: center; gap: 13px; }
+.demo-brand > svg { color: #fc9b58; }
+.demo-brand > div { display: flex; flex-direction: column; gap: 4px; }
+.demo-brand strong { font-size: 15px; }
+.demo-brand div span { font-size: 12px; color: var(--muted); }
+.demo-badge { margin-left: 12px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 10px; letter-spacing: .1em; color: var(--muted); }
+.demo-header nav { display: flex; gap: 6px; }
+.demo-header nav button { background: transparent; color: var(--muted); font-size: 13px; }
+.demo-header nav button[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); }
+.demo-controls { padding: 12px 30px; display: flex; align-items: center; gap: 14px; background: rgb(var(--component-rgb) / .45); border-bottom: 1px solid var(--line); }
+.demo-controls p { margin: 0; flex: 1; font-size: 11px; color: var(--muted); }
+.demo-controls label { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--muted); }
+.demo-controls select { width: 235px; max-width: none; font-size: 12px; padding: 7px 9px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 5px; }
+.demo-controls > button { min-height: 30px; padding: 6px 9px; background: transparent; color: var(--muted); font-size: 12px; }
+.demo-eyebrow { font-size: 10px; font-weight: 600; color: #fc9b58; letter-spacing: .13em; }
+.demo-board { min-height: 0; flex: 1; display: flex; flex-direction: column; --kanban-composer-clearance: 0px; }
+.demo-board-heading { display: flex; align-items: center; justify-content: space-between; padding: 24px 30px 20px; gap: 25px; }
+.demo-board-heading h1 { font-size: 23px; margin-bottom: 0; }
+.demo-board-heading p { max-width: 520px; font-size: 12px; line-height: 1.7; color: var(--muted); margin: 0; }
+.demo-notice { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 1500; display: flex; align-items: center; gap: 16px; max-width: 760px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); box-shadow: var(--shadow); font-size: 12px; overflow-wrap: anywhere; }
+.demo-notice button { flex: 0 0 26px; min-height: 26px; padding: 3px; background: transparent; color: var(--text); }
+@media(max-width: 1000px) { .demo-controls > p { max-width: 235px; line-height: 1.6; } .demo-board-heading p { max-width: 380px; } }
+
+.demo-settings-shell { flex: 1; height: auto; min-height: 0; }
+.demo-settings-shell > .app-rail, .demo-settings-shell > .main { height: 100%; min-height: 0; }

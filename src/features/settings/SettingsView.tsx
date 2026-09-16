@@ -1,3 +1,4 @@
+import { SettingsDetailHeader, SettingsIconAction } from "./SettingsPanel";
 import { GitlabSettingsPanel, GitlabConnectionSummary } from "../gitlab/GitlabSettingsPanel";
 import {
   Bell,
@@ -28,8 +29,6 @@ import {
   useId,
   useRef,
   useState,
-  type ReactNode,
-  type Ref,
 } from "react";
 import { createPortal } from "react-dom";
 import { version as appVersion } from "../../../package.json";
@@ -1348,38 +1347,6 @@ function SettingsNavigationRow({
   );
 }
 
-function SettingsIconAction({
-  icon: Icon,
-  ariaLabel,
-  tooltip,
-  buttonRef,
-  danger = false,
-  disabled = false,
-  onActivate,
-}: {
-  icon: typeof Monitor;
-  ariaLabel: string;
-  tooltip: string;
-  buttonRef?: Ref<HTMLButtonElement>;
-  danger?: boolean;
-  disabled?: boolean;
-  onActivate: () => void;
-}) {
-  return (
-    <button
-      ref={buttonRef}
-      className={`settings-icon-action${danger ? " danger" : ""}`}
-      type="button"
-      aria-label={ariaLabel}
-      data-tooltip={tooltip}
-      disabled={disabled}
-      onClick={onActivate}
-    >
-      <Icon size={16} aria-hidden="true" />
-    </button>
-  );
-}
-
 function SettingsSwitch({
   ariaLabel,
   checked,
@@ -1410,32 +1377,6 @@ function scrollToSettingsSection(id: string) {
     behavior: "smooth",
     block: "start",
   });
-}
-
-function SettingsDetailHeader({
-  icon: Icon,
-  title,
-  status,
-  statusContent,
-}: {
-  icon: typeof Monitor;
-  title: string;
-  status?: SettingsDetailStatus;
-  statusContent?: ReactNode;
-}) {
-  return (
-    <div className="surface-header settings-detail-header">
-      <div className="settings-detail-heading">
-        <span className="settings-detail-header-icon" aria-hidden="true">
-          <Icon size={20} />
-        </span>
-        <div className="settings-detail-header-copy">
-          <h2>{title}</h2>
-        </div>
-      </div>
-      {statusContent ?? (status ? <SettingsStatusBadge {...status} /> : null)}
-    </div>
-  );
 }
 
 function NotificationSettings({

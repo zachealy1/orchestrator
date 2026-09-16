@@ -35,7 +35,7 @@ describe("GitLab Settings", () => {
   it("uses browser sign-in for GitLab.com", async () => {
     render(<GitlabSettingsPanel />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Connect" }),
+      await screen.findByRole("button", { name: "Connect gitlab.com" }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Sign in with browser" }),
@@ -82,9 +82,9 @@ describe("GitLab Settings", () => {
       expect(api.disconnectGitlab).toHaveBeenCalledWith("gitlab.com"),
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Cancel" })).not.toBeDisabled(),
+      expect(screen.getByRole("button", { name: "Cancel sign-in to code.example" })).not.toBeDisabled(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in to code.example" }));
     await waitFor(() =>
       expect(api.cancelGitlabConnection).toHaveBeenCalledWith("code.example"),
     );
