@@ -1,3 +1,5 @@
+import { isDocumentVisible, useDocumentVisible } from "../shared/documentVisibility";
+import { WorkspaceRefreshController } from "../features/workspaces/WorkspaceRefreshController";
 import { useModelCatalog } from "../features/codex/useModelCatalog";
 import { useReleaseServices } from "./useReleaseServices";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -571,7 +573,6 @@ import {
 import {
   AGENT_NOTIFICATION_FOCUS_TIMEOUT_MS,
   BACKGROUND_INTERACTION_GRACE_MS,
-  BACKGROUND_REFRESH_RETRY_MS,
   BUFFERABLE_RUN_NOTIFICATION_METHODS,
   CODEX_LOGIN_TIMEOUT_MS,
   COMMIT_MESSAGE_GENERATION_ERROR,
@@ -579,7 +580,6 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   EMPTY_GIT_STATUS_BY_PATH,
   EXTERNAL_CODEX_SOURCE_KINDS,
-  GIT_STATUS_AUTO_REFRESH_INTERVAL_MS,
   HISTORY_ACTIVITY_PAGE_SIZE,
   HISTORY_CHAT_PAGE_SIZE,
   HISTORY_VIRTUOSO_BASE_INDEX,
@@ -761,6 +761,9 @@ function instructionKindForCollabTool(
 
 function App() {
   const appServices = useAppServices();
+  const documentVisible = useDocumentVisible();
+  const pendingRunPublicationsRef = useRef(new Map<string, ActiveRunControl>());
+  const workspaceRefreshControllerRef = useRef<WorkspaceRefreshController<Workspace> | null>(null);
   const {
     imageAttachments,
     repositories,
@@ -1013,7 +1016,6 @@ function App() {
     gitActionInFlightRef,
     gitOperationInFlightWorkspaceIdsRef,
     gitOperationSequenceRef,
-    gitStatusRefreshCache,
     workspaceFileIndexCache,
     workspaceFileIndexRequestCache,
   } = useWorkspaceController();
@@ -1288,6 +1290,11 @@ function App() {
     collaborationModeMasksRef,
     planActionLocksRef,
   } = useRunController();
+  // Only deferred streaming state can be newer than its React snapshot.
+  const deferredSelectedRun = activeRunControlRef.current;
+  if (deferredSelectedRun && pendingRunPublicationsRef.current.has(deferredSelectedRun.clientId)) {
+    runViewRef.current = deferredSelectedRun.runView;
+  }
   const activeRunRegistryVersion = useSyncExternalStore(
     activeRunRegistry.subscribe,
     activeRunRegistry.getSnapshot,
@@ -3407,6 +3414,33 @@ function App() {
     });
   }, [defaultProfileAuthenticated, workspaceLocationsKey, workspaces]);
 
+  const performGitRefresh = useStableEvent(performWorkspaceGitStatusRefresh);
+  const refreshPollingDirectories = useStableEvent(refreshVisibleWorkspaceDirectories);
+  const shouldDeferWorkspacePolling = useStableEvent(() =>
+    isTranscriptScrolling() ||
+    previewResizingRef.current ||
+    getDrawerPhase() === "opening" ||
+    getDrawerPhase() === "closing" ||
+    Date.now() - lastForegroundInteractionAtRef.current < BACKGROUND_INTERACTION_GRACE_MS,
+  );
+
+  useEffect(() => {
+    const controller = new WorkspaceRefreshController<Workspace>({
+      refresh: performGitRefresh,
+      refreshDirectories: refreshPollingDirectories,
+      shouldDefer: shouldDeferWorkspacePolling,
+    });
+    workspaceRefreshControllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      workspaceRefreshControllerRef.current = null;
+    };
+  }, [performGitRefresh, refreshPollingDirectories, shouldDeferWorkspacePolling]);
+
+  useEffect(() => {
+    workspaceRefreshControllerRef.current?.update(workspaces, selectedWorkspace?.id ?? null);
+  }, [workspaces, selectedWorkspace?.id, selectedWorkspace?.path]);
+
   useEffect(() => {
     if (!selectedWorkspace) {
       return;
@@ -3415,7 +3449,6 @@ function App() {
     if (activeView !== "analytics") {
       void refreshWorkspaceData(selectedWorkspace.id);
     }
-    void refreshWorkspaceGitStatus(selectedWorkspace);
     if (defaultProfileAuthenticated) {
       void reconcileKanbanNativeTasks(selectedWorkspace).then(() => {
         if (selectedWorkspaceRef.current?.id === selectedWorkspace.id) {
@@ -3498,12 +3531,6 @@ function App() {
   ]);
 
   useEffect(() => {
-    workspaces.forEach((workspace) => {
-      void refreshWorkspaceGitStatus(workspace, { showLoading: false });
-    });
-  }, [workspaceLocationsKey]);
-
-  useEffect(() => {
     const markForegroundInteraction = () => {
       lastForegroundInteractionAtRef.current = Date.now();
     };
@@ -3525,63 +3552,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (workspaces.length === 0) {
-      return;
+    if (!documentVisible) return;
+    flushBatchedCodexNotifications();
+    const pending = new Map(pendingRunPublicationsRef.current);
+    pendingRunPublicationsRef.current.clear();
+    if (pending.size === 0) return;
+    const selected = activeRunControlRef.current;
+    if (selected && pending.has(selected.clientId)) {
+      runViewRef.current = selected.runView;
+      setRunView(selected.runView);
     }
-
-    let cancelled = false;
-    let timeoutId: number | null = null;
-
-    const shouldDeferRefresh = () =>
-      document.visibilityState === "hidden" ||
-      isTranscriptScrolling() ||
-      previewResizingRef.current ||
-      getDrawerPhase() === "opening" ||
-      getDrawerPhase() === "closing" ||
-      Date.now() - lastForegroundInteractionAtRef.current <
-        BACKGROUND_INTERACTION_GRACE_MS;
-
-    const scheduleRefresh = (delay = GIT_STATUS_AUTO_REFRESH_INTERVAL_MS) => {
-      if (cancelled) {
-        return;
-      }
-
-      timeoutId = window.setTimeout(async () => {
-        timeoutId = null;
-        if (shouldDeferRefresh()) {
-          scheduleRefresh(BACKGROUND_REFRESH_RETRY_MS);
-          return;
-        }
-
-        const selectedWorkspaceId = selectedWorkspaceRef.current?.id ?? null;
-        const orderedWorkspaces = [...workspaces].sort(
-          (left, right) =>
-            Number(right.id === selectedWorkspaceId) -
-            Number(left.id === selectedWorkspaceId),
-        );
-
-        for (const workspace of orderedWorkspaces) {
-          if (cancelled || shouldDeferRefresh()) break;
-          await refreshWorkspaceGitStatus(workspace, {
-            showLoading: false,
-            background: true,
-          }).catch(() => undefined);
-          if (cancelled || shouldDeferRefresh()) break;
-          await refreshVisibleWorkspaceDirectories(workspace);
-        }
-        scheduleRefresh();
-      }, delay);
-    };
-
-    scheduleRefresh();
-
-    return () => {
-      cancelled = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-    };
-  }, [expandedDirectoryPaths, expandedWorkspaceIds, workspaces]);
+    setTaskChatEntries((current) => current.map((entry) => {
+      const control = pending.get(entry.clientId);
+      return control ? { ...entry, status: control.runView.status, runView: control.runView } : entry;
+    }));
+  }, [documentVisible]);
 
   useEffect(() => {
     setSelectedRunAliases(selectedActiveRunControl);
@@ -3591,7 +3576,7 @@ function App() {
     const hasActiveRuns = [...activeRunRegistry.values()].some(
       isActiveRunControl,
     );
-    if (!hasActiveRuns) {
+    if (!documentVisible || !hasActiveRuns) {
       return;
     }
 
@@ -3606,7 +3591,7 @@ function App() {
     tick();
     const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [activeRunRegistryVersion]);
+  }, [activeRunRegistryVersion, documentVisible]);
 
   useEffect(() => {
     if (unroutedApprovals.length === 0) return;
@@ -3709,7 +3694,7 @@ function App() {
         setUnroutedApprovals(remainingUnroutedApprovals);
       }
       if (profileControls.length > 0) {
-        flushFrameBatchedCodexNotifications();
+        flushBatchedCodexNotifications();
         profileControls.forEach((control) => {
           void persistRunEvent(control, "process", event.status, event);
         });
@@ -4648,26 +4633,17 @@ function App() {
     await loadWorkspaceRunHistory(selectedWorkspaceRef.current);
   }
 
-  async function refreshWorkspaceGitStatus(
+  function refreshWorkspaceGitStatus(
     workspace: Workspace,
     options: RefreshWorkspaceGitStatusOptions = {},
   ) {
-    const existingRefresh = gitStatusRefreshCache.current.get(workspace.id);
-    if (existingRefresh) {
-      if (!options.force) {
-        return existingRefresh;
-      }
+    return workspaceRefreshControllerRef.current?.request(workspace, options) ?? Promise.resolve();
+  }
 
-      // A completion refresh must observe the filesystem after the turn. An
-      // in-flight poll may have captured the pre-run state, so wait for it and
-      // issue one new request instead of reusing its potentially stale result.
-      await existingRefresh.catch(() => undefined);
-      return refreshWorkspaceGitStatus(workspace, {
-        ...options,
-        force: true,
-      });
-    }
-
+  async function performWorkspaceGitStatusRefresh(
+    workspace: Workspace,
+    options: RefreshWorkspaceGitStatusOptions = {},
+  ) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
       setGitStatusStates((current) => ({
@@ -4785,12 +4761,8 @@ function App() {
         };
         if (options.background) startTransition(update);
         else update();
-      })
-      .finally(() => {
-        gitStatusRefreshCache.current.delete(workspace.id);
       });
 
-    gitStatusRefreshCache.current.set(workspace.id, refresh);
     return refresh;
   }
 
@@ -6529,8 +6501,8 @@ function App() {
     }
   }
 
-  function saveSubagentRecord(record: SubagentRecord) {
-    subagentStore.upsert(record);
+  function saveSubagentRecord(record: SubagentRecord, deferPublication = false) {
+    subagentStore.upsert(record, { deferPublication });
     if (record.runId === null) return;
     void upsertRunSubagent(record).catch((error) => {
       console.error("Could not persist subagent lifecycle", error);
@@ -6765,7 +6737,7 @@ function App() {
       updatedAt: now,
       completedAt: terminal ? record.completedAt ?? now : null,
     };
-    saveSubagentRecord(next);
+    saveSubagentRecord(next, shouldFrameBatchCodexMessage(message));
     return next;
   }
 
@@ -7013,6 +6985,7 @@ function App() {
   function updateRunControlView(
     control: ActiveRunControl,
     updater: (current: RunViewState) => RunViewState,
+    { publish = true }: { publish?: boolean } = {},
   ) {
     const nextRunView = updater(control.runView);
     control.runView = nextRunView;
@@ -7025,8 +6998,13 @@ function App() {
     }
     if (activeRunControlRef.current === control) {
       runViewRef.current = nextRunView;
-      setRunView(nextRunView);
+      if (publish) setRunView(nextRunView);
     }
+    if (!publish) {
+      pendingRunPublicationsRef.current.set(control.clientId, control);
+      return nextRunView;
+    }
+    pendingRunPublicationsRef.current.delete(control.clientId);
     setTaskChatEntries((current) =>
       current.map((entry) =>
         entry.clientId === control.clientId
@@ -7448,7 +7426,7 @@ function App() {
       );
     }
 
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
 
     if (kanbanStopRequest) {
@@ -9562,7 +9540,6 @@ function App() {
         directoryRequestCache.current.delete(key);
       }
     }
-    gitStatusRefreshCache.current.delete(workspace.id);
     workspaceFileIndexCache.current.delete(workspace.id);
     workspaceFileIndexRequestCache.current.delete(workspace.id);
   }
@@ -9699,11 +9676,11 @@ function App() {
     try {
       await checkoutGitBranch(selectedWorkspace.path, branch, repositoryPath);
       await refreshBranches(selectedWorkspace, repositoryPath);
-      await refreshWorkspaceGitStatus(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace, { force: true });
       setStatusMessage(`Working on ${selectedWorkspace.label} at ${branch}.`);
     } catch (error) {
       await refreshBranches(selectedWorkspace, repositoryPath);
-      await refreshWorkspaceGitStatus(selectedWorkspace);
+      await refreshWorkspaceGitStatus(selectedWorkspace, { force: true });
       setStatusMessage(
         `Could not switch to ${branch}: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -9790,10 +9767,11 @@ function App() {
 
     try {
       await checkoutGitBranch(workspace.path, branch, repositoryPath);
+      await refreshWorkspaceGitStatus(workspace, { showLoading: false, force: true });
       return true;
     } catch (error) {
       await refreshBranches(workspace, repositoryPath);
-      await refreshWorkspaceGitStatus(workspace);
+      await refreshWorkspaceGitStatus(workspace, { force: true });
       setStatusMessage(
         `Could not switch to ${branch}: ${
           error instanceof Error ? error.message : String(error)
@@ -12232,7 +12210,7 @@ function App() {
       await softDeleteRun(supersededRunId);
       ensureRunControlActive(runControl);
     }
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
     await flushBufferedRunEvents().catch(() => undefined);
     runControl.eventSequence = 0;
     updateTaskChatEntryIds(runControl.clientId, {
@@ -14449,7 +14427,7 @@ function App() {
         selectedSkills,
         selectedSkills.length ? await getCodexSkills(control.profileKey, control.accountId, true) : [],
       );
-      flushFrameBatchedCodexNotifications();
+      flushBatchedCodexNotifications();
       updateRunControlView(control, (current) => addSteerPrompt(current, {
         id: steerEventId,
         text: currentItem.prompt,
@@ -15906,8 +15884,8 @@ function App() {
     }
   }
 
-  function flushFrameBatchedCodexNotifications() {
-    const pending = appServices.codexNotificationFrames.drain();
+  function flushBatchedCodexNotifications() {
+    const pending = appServices.codexNotificationBatches.drain();
     if (pending.length === 0) {
       return runViewRef.current;
     }
@@ -15923,18 +15901,19 @@ function App() {
       const coalesced = coalesceFrameBatchedCodexMessages(messages);
       updateRunControlView(control, (current) =>
         coalesced.reduce(applyCodexMessage, current),
+        { publish: isDocumentVisible() },
       );
     });
     return runViewRef.current;
   }
 
-  function queueFrameBatchedCodexNotification(
+  function queueBatchedCodexNotification(
     profileKey: CodexProfileKey,
     message: CodexMessage,
   ) {
-    appServices.codexNotificationFrames.enqueue(
+    appServices.codexNotificationBatches.enqueue(
       { profileKey, message },
-      flushFrameBatchedCodexNotifications,
+      flushBatchedCodexNotifications,
     );
   }
 
@@ -17151,11 +17130,11 @@ function App() {
 
     if (shouldFrameBatchCodexMessage(message)) {
       queueBufferedRunEvent(control, "notification", method, message);
-      queueFrameBatchedCodexNotification(profileKey, message);
+      queueBatchedCodexNotification(profileKey, message);
       return;
     }
 
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
 
     let nextRunView = updateRunControlView(control, (current) => {
       let next = applyCodexMessage(current, message);
@@ -17567,7 +17546,7 @@ function App() {
       setApprovalSafetyWarning(warning);
       return;
     }
-    flushFrameBatchedCodexNotifications();
+    flushBatchedCodexNotifications();
     const {
       threadId: requestThreadId,
       turnId: requestTurnId,

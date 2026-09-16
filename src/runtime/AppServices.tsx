@@ -19,7 +19,7 @@ import {
 } from "../lib/subagents";
 import { TranscriptGeometryCache } from "../lib/transcriptVirtualization";
 import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
-import { AnimationFrameBatcher } from "../shared/AnimationFrameBatcher";
+import { StreamingBatcher } from "../shared/StreamingBatcher";
 import { AsyncResourceCache } from "../shared/cache/AsyncResourceCache";
 import type { CodexMessage, CodexProfileKey } from "../features/codex/types";
 import { HistoricalTranscriptCache } from "../features/conversations/HistoricalTranscriptCache";
@@ -41,7 +41,7 @@ export class AppServices {
   readonly runEvents = new RunEventBuffer((events) =>
     this.repositories.runs.appendRunEvents(events),
   );
-  readonly codexNotificationFrames = new AnimationFrameBatcher<{
+  readonly codexNotificationBatches = new StreamingBatcher<{
     profileKey: CodexProfileKey;
     message: CodexMessage;
   }>();
@@ -105,7 +105,7 @@ export class AppServices {
     this.runCoordinator.dispose();
     this.activeRuns.dispose();
     this.runEvents.dispose();
-    this.codexNotificationFrames.dispose();
+    this.codexNotificationBatches.dispose();
     this.historicalTranscripts.clear();
     this.historicalActivities.clear();
     this.workspaceTaskMemories.clear();

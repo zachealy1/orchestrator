@@ -1,3 +1,4 @@
+import { useDocumentVisible } from "../shared/documentVisibility";
 import {
   BrainCircuit,
   Check,
@@ -112,6 +113,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   onSteer,
   onStop,
 }: Props) {
+  const documentVisible = useDocumentVisible();
   const { subagents, subagentTranscripts } = useAppServices();
   const records = useConversationSubagents(subagents, conversationKey);
   const record =
@@ -135,7 +137,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   recordRef.current = record;
 
   useEffect(() => {
-    if (!record) return;
+    if (!documentVisible || !record) return;
     const generation = ++loadGenerationRef.current;
     const cacheKey = transcriptCacheKey(record);
     const cached = subagentTranscripts.get(cacheKey) ?? null;
@@ -176,8 +178,12 @@ export const SubagentInspector = memo(function SubagentInspector({
           );
         });
     }, cached ? 240 : 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadGenerationRef.current += 1;
+    };
   }, [
+    documentVisible,
     onLoadTranscript,
     record?.childTurnId,
     record?.completedAt,
@@ -186,7 +192,7 @@ export const SubagentInspector = memo(function SubagentInspector({
   ]);
 
   useEffect(() => {
-    if (!record || !isActiveSubagentStatus(record.status)) return;
+    if (!documentVisible || !record || !isActiveSubagentStatus(record.status)) return;
     const recordId = record.id;
     const timer = window.setInterval(() => {
       const current = recordRef.current;
@@ -231,7 +237,7 @@ export const SubagentInspector = memo(function SubagentInspector({
         });
     }, ACTIVE_TRANSCRIPT_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [onLoadTranscript, record?.id, record?.status, subagentTranscripts]);
+  }, [documentVisible, onLoadTranscript, record?.id, record?.status, subagentTranscripts]);
 
   const interactionRunView = useMemo(
     () =>

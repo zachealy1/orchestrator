@@ -2,8 +2,6 @@ import type { WorkspaceGitFileStatus } from "../features/workspaces/types";
 import type { CodexProfileKey } from "../features/codex/types";
 
 export const DEFAULT_CONTEXT_WINDOW = 258_400;
-export const GIT_STATUS_AUTO_REFRESH_INTERVAL_MS = 3000;
-export const BACKGROUND_REFRESH_RETRY_MS = 500;
 export const BACKGROUND_INTERACTION_GRACE_MS = 700;
 export const HISTORY_CHAT_PAGE_SIZE = 20;
 export const SHARED_TRANSCRIPT_SYNC_TIMEOUT_MS = 30_000;
