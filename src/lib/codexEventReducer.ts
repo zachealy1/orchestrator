@@ -50,6 +50,7 @@ export type RunEditedFile = {
 
 export type RunCommandActivity = {
   id: string;
+  exitCode?: number | null;
   command: string;
   status:
     | "pending"
@@ -1385,11 +1386,13 @@ function upsertCommandActivity(
   if (existing && ["completed", "failed", "declined"].includes(existing.status) && ["pending", "running"].includes(status)) return state;
   const durationMs = extractDurationMs(params);
   const completedOutput = readString(readObject(params.item).aggregatedOutput) ?? readString(params.aggregatedOutput);
+  const exitCode = readOptionalNumber(readObject(params.item).exitCode) ?? readOptionalNumber(params.exitCode);
   const nextCommand = {
     id: id ?? `command-${state.commands.length + 1}`,
     command: command ?? "Command",
     status,
     durationMs,
+    ...(exitCode !== null ? { exitCode } : {}),
     output: "",
   };
   const baseState = appendTimelineEvent ? removeTrailingThinkingEvent(state) : state;
@@ -1494,6 +1497,8 @@ function upsertCommand(
       status: nextCommand.status,
       durationMs: nextCommand.durationMs ?? existing.durationMs,
       output: `${existing.output}${nextCommand.output}`,
+      ...((nextCommand.exitCode ?? existing.exitCode) != null
+        ? { exitCode: nextCommand.exitCode ?? existing.exitCode } : {}),
     },
     ...commands.slice(existingIndex + 1),
   ];

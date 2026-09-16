@@ -1,3 +1,4 @@
+import { StreamingMarkdown } from "./StreamingText";
 import { ActivityTimeline, ActivityDisclosure, activityStatusLabel, attentionTimelineItems } from "./TranscriptActivity";
 import { usePreviewableMarkdownComponents } from "./useTranscriptMarkdown";
 import {
@@ -1032,7 +1033,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
       <span>{entry.historicalActivity.error ?? "Activity could not be loaded."}</span>
       <button type="button" onClick={() => onLoadHistoricalActivity?.(entry)}>Retry</button>
     </div> : null}
-    <RunTimeline items={timeline} onOpenTranscriptLink={onOpenTranscriptLink} />
+    <RunTimeline items={timeline} active={active} onOpenTranscriptLink={onOpenTranscriptLink} />
   </ActivityDisclosure>;
 });
 
@@ -1157,13 +1158,7 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
       aria-label="Run summary"
       aria-live={streaming ? "polite" : undefined}
     >
-      <ReactMarkdown
-        components={markdownComponents}
-        {...TRANSCRIPT_MARKDOWN_PLUGINS}
-        urlTransform={transcriptMarkdownUrlTransform}
-      >
-        {markdown}
-      </ReactMarkdown>
+      <StreamingMarkdown text={markdown} active={streaming} components={markdownComponents} />
     </div>
   );
 });
@@ -1365,11 +1360,12 @@ function isFileNameBoundaryCharacter(value: string) {
   return /[A-Za-z0-9_.-]/.test(value);
 }
 
-const RunTimeline = memo(function RunTimeline({ items, onOpenTranscriptLink }: {
+const RunTimeline = memo(function RunTimeline({ items, onOpenTranscriptLink, active = false }: {
+  active?: boolean;
   items: TimelineItem[];
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  return <ActivityTimeline items={items} onOpenTranscriptLink={onOpenTranscriptLink}
+  return <ActivityTimeline items={items} active={active} onOpenTranscriptLink={onOpenTranscriptLink}
     renderSteer={(event) => <SteerPrompt event={event} onOpenTranscriptLink={onOpenTranscriptLink} />} />;
 });
 

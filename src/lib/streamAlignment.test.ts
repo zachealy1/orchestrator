@@ -223,3 +223,12 @@ it("anchors final-only reasoning and delayed message deltas at item start", () =
     ),
   ).toEqual(["Reasoned", "Message", "tools"]);
 });
+
+it("retains authoritative command exit codes with output through replay and late deltas", () => {
+  const state = replay([
+    event("item/started", { item: { id: "item", type: "commandExecution", command: "rg --files", status: "inProgress" } }),
+    event("item/completed", { item: { id: "item", type: "commandExecution", command: "rg --files", status: "failed", exitCode: 127, aggregatedOutput: "zsh: command not found: rg" } }),
+    event("item/commandExecution/outputDelta", { delta: "late output" }),
+  ]);
+  expect(state.commands[0]).toMatchObject({ status: "failed", exitCode: 127, output: "zsh: command not found: rg" });
+});

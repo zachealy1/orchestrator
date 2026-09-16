@@ -1524,7 +1524,7 @@ it("keeps the edited-files summary hidden while command activity is running", ()
         "npm test -- --run src/components/TaskChatTranscript.test.tsx",
       ),
     ).toBeInTheDocument();
-    expect(within(commandGroup).getByText("for 12s")).toBeInTheDocument();
+    expect(within(commandGroup).getByText("12s")).toBeInTheDocument();
     const firstMessage = screen.getByText("I will inspect the files first.");
     const secondMessage = screen.getByText("The transcript view is updated.");
     expect(

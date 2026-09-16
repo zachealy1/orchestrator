@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  CircleAlert,
   FileText,
   GitPullRequest,
   Globe2,
@@ -14,17 +15,15 @@ import {
   Wrench,
 } from "lucide-react";
 import { memo, useState, useEffect, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import { StreamingMarkdown, StreamingText } from "./StreamingText";
 import type {
   RunCommandActivity,
   RunToolActivity,
   StreamActivityEvent,
 } from "../lib/codexEventReducer";
 import type { TimelineItem } from "../lib/runTimeline";
-import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import { normalizePreviewableMarkdownLinks } from "../lib/summaryLinks";
 import { prepareStreamingMarkdown } from "../lib/streamingMarkdown";
-import { transcriptMarkdownUrlTransform } from "./TranscriptMarkdownImage";
 import { usePreviewableMarkdownComponents } from "./useTranscriptMarkdown";
 import {
   captureTranscriptViewportAnchor,
@@ -33,39 +32,76 @@ import {
 
 export const CommandsGroup = memo(function CommandsGroup({
   commands,
+  active = false,
 }: {
+  active?: boolean;
   commands: RunCommandActivity[];
 }) {
   const [outputOpen, setOutputOpen] = useState<Record<string, boolean>>({});
   const [groupOpen, setGroupOpen] = useState<Record<string, boolean>>({});
   const renderCommand = (command: RunCommandActivity) => (
-    <div
+    <details
       className={`run-activity-item command-row is-${command.status}`}
       key={command.id}
+      open={outputOpen[command.id] ?? false}
+      onToggle={(event) => {
+        const open = event.currentTarget.open;
+        setOutputOpen((current) =>
+          current[command.id] === open
+            ? current
+            : { ...current, [command.id]: open },
+        );
+      }}
     >
-      <span>{commandActionLabel(command.status)}</span>
-      <span className="activity-command-text">{command.command}</span>
-      {command.durationMs !== null ? (
-        <span>for {formatDuration(command.durationMs)}</span>
-      ) : null}
-      {command.output ? (
-        <details
-          className="command-output"
-          open={outputOpen[command.id] ?? false}
-          onToggle={(event) => {
-            const open = event.currentTarget.open;
-            setOutputOpen((current) =>
-              current[command.id] === open
-                ? current
-                : { ...current, [command.id]: open },
-            );
-          }}
+      <summary className="command-summary" title={command.command}>
+        {command.status === "failed" ? (
+          <CircleAlert
+            size={15}
+            className="command-failure-icon"
+            aria-label="Failed"
+          />
+        ) : (
+          <Terminal size={15} aria-hidden="true" />
+        )}
+        <span
+          className={
+            active && command.status === "running"
+              ? "stream-working-label"
+              : undefined
+          }
         >
-          <summary>Output</summary>
-          <pre>{command.output}</pre>
-        </details>
-      ) : null}
-    </div>
+          {commandActionLabel(command.status)}
+        </span>
+        <span className="activity-command-text">{command.command}</span>
+        {command.durationMs !== null && command.durationMs >= 1000 ? (
+          <span className="command-duration">
+            {formatDuration(command.durationMs)}
+          </span>
+        ) : null}
+        <ChevronRight
+          className="command-chevron"
+          size={14}
+          aria-hidden="true"
+        />
+      </summary>
+      <div className="command-output">
+        <pre className="command-source">{`$ ${command.command}`}</pre>
+        <pre className="command-output-text">
+          {command.output || "No output"}
+        </pre>
+        <div className="command-output-footer">
+          {command.exitCode != null
+            ? `Process exited with code ${command.exitCode}`
+            : command.status === "failed"
+              ? "Command failed"
+              : command.status === "declined"
+                ? "Command declined"
+                : command.status === "completed"
+                  ? "Command completed"
+                  : commandActionLabel(command.status)}
+        </div>
+      </div>
+    </details>
   );
   return (
     <div className="command-activity-groups">
@@ -115,7 +151,9 @@ export const CommandsGroup = memo(function CommandsGroup({
 
 export const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
   activities,
+  active = false,
 }: {
+  active?: boolean;
   activities: RunToolActivity[];
 }) {
   return (
@@ -127,7 +165,11 @@ export const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
           return (
             <div key={run.items[0].id}>
               {run.items.map((activity) => (
-                <ToolActivityRow activity={activity} key={activity.id} />
+                <ToolActivityRow
+                  active={active}
+                  activity={activity}
+                  key={activity.id}
+                />
               ))}
             </div>
           );
@@ -151,7 +193,11 @@ export const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
             </summary>
             <div className="run-activity-items">
               {run.items.map((activity) => (
-                <ToolActivityRow activity={activity} key={activity.id} />
+                <ToolActivityRow
+                  active={active}
+                  activity={activity}
+                  key={activity.id}
+                />
               ))}
             </div>
           </details>
@@ -163,7 +209,9 @@ export const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
 
 const ToolActivityRow = memo(function ToolActivityRow({
   activity,
+  active,
 }: {
+  active: boolean;
   activity: RunToolActivity;
 }) {
   return (
@@ -174,7 +222,10 @@ const ToolActivityRow = memo(function ToolActivityRow({
       <span className="tool-activity-icon" aria-hidden="true">
         {toolCategoryIcon(activity.category, 15)}
       </span>
-      <span className="tool-activity-label" title={activity.label}>
+      <span
+        className={`tool-activity-label${active && activity.status === "running" ? " stream-working-label" : ""}`}
+        title={activity.label}
+      >
         {activity.label}
       </span>
       {activity.durationMs !== null ? (
@@ -266,7 +317,9 @@ function toolActivityStatusLabel(status: RunToolActivity["status"]) {
 export const StreamEventRow = memo(function StreamEventRow({
   event,
   onOpenTranscriptLink,
+  active = false,
 }: {
+  active?: boolean;
   event: StreamActivityEvent;
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
@@ -275,15 +328,13 @@ export const StreamEventRow = memo(function StreamEventRow({
   if (event.kind === "message") {
     return (
       <div className="stream-message" key={event.id}>
-        <ReactMarkdown
+        <StreamingMarkdown
           components={markdownComponents}
-          {...TRANSCRIPT_MARKDOWN_PLUGINS}
-          urlTransform={transcriptMarkdownUrlTransform}
-        >
-          {prepareStreamingMarkdown(
+          active={active && event.streaming !== false}
+          text={prepareStreamingMarkdown(
             normalizePreviewableMarkdownLinks(event.text),
           )}
-        </ReactMarkdown>
+        />
       </div>
     );
   }
@@ -291,7 +342,12 @@ export const StreamEventRow = memo(function StreamEventRow({
   return (
     <div className={`stream-event ${event.kind}`} key={event.id}>
       {streamEventIcon(event.kind)}
-      <span>{event.text}</span>
+      <span>
+        <StreamingText
+          text={event.text}
+          active={active && event.streaming !== false}
+        />
+      </span>
       {event.statusLabel ? (
         <span className="subagent-transcript-activity-status">
           {event.statusLabel}
@@ -335,7 +391,7 @@ export function formatDuration(milliseconds: number) {
 
 function commandActionLabel(status: RunCommandActivity["status"]) {
   if (status === "failed") {
-    return "Failed";
+    return "Ran";
   }
   if (status === "declined") {
     return "Skipped";
@@ -356,45 +412,70 @@ export function ActivityTimeline({
   items,
   onOpenTranscriptLink,
   renderSteer,
+  active = false,
 }: {
+  active?: boolean;
   items: TimelineItem[];
   onOpenTranscriptLink?: (href: string) => boolean;
   renderSteer?: (
     event: Extract<TimelineItem, { kind: "steer" }>["event"],
   ) => ReactNode;
 }) {
+  const [initialIds] = useState(() => new Set(items.map(timelineItemId)));
   if (!items.length) return null;
   return (
     <div className="stream-event-list" aria-label="App-server stream">
-      {items.map((item) =>
-        item.kind === "steer" ? (
-          <div key={item.event.id}>{renderSteer?.(item.event)}</div>
-        ) : item.kind === "commands" ? (
-          <div
-            className="run-activity-groups"
-            aria-label="Run activity groups"
-            key={item.id}
-          >
-            <CommandsGroup commands={item.commands} />
-          </div>
-        ) : item.kind === "tools" ? (
-          <div
-            className="run-activity-groups"
-            aria-label="Run activity groups"
-            key={item.id}
-          >
-            <ToolActivitiesGroup activities={item.activities} />
-          </div>
-        ) : (
-          <StreamEventRow
-            key={item.event.id}
-            event={item.event}
-            onOpenTranscriptLink={onOpenTranscriptLink}
-          />
-        ),
-      )}
+      {items.map((item) => (
+        <div
+          key={timelineItemId(item)}
+          className="stream-timeline-item"
+          data-stream-enter={
+            active &&
+            item.kind !== "commands" &&
+            !initialIds.has(timelineItemId(item))
+              ? ""
+              : undefined
+          }
+        >
+          {item.kind === "steer" ? (
+            <div key={item.event.id}>{renderSteer?.(item.event)}</div>
+          ) : item.kind === "commands" ? (
+            <div
+              className="run-activity-groups"
+              aria-label="Run activity groups"
+              key={item.id}
+            >
+              <CommandsGroup commands={item.commands} active={active} />
+            </div>
+          ) : item.kind === "tools" ? (
+            <div
+              className="run-activity-groups"
+              aria-label="Run activity groups"
+              key={item.id}
+            >
+              <ToolActivitiesGroup
+                activities={item.activities}
+                active={active}
+              />
+            </div>
+          ) : (
+            <StreamEventRow
+              key={item.event.id}
+              event={item.event}
+              active={active}
+              onOpenTranscriptLink={onOpenTranscriptLink}
+            />
+          )}
+        </div>
+      ))}
     </div>
   );
+}
+
+function timelineItemId(item: TimelineItem) {
+  return item.kind === "commands" || item.kind === "tools"
+    ? item.id
+    : item.event.id;
 }
 
 export function activityStatusLabel(status: string, elapsedMs: number) {
@@ -476,7 +557,9 @@ export function ActivityDisclosure({
         >
           <span>
             <Clock size={15} aria-hidden="true" />
-            {label}
+            <span className={active ? "stream-working-label" : undefined}>
+              {label}
+            </span>
           </span>
           {metrics ? (
             <span className="stream-secondary-metrics">{metrics}</span>
@@ -487,7 +570,7 @@ export function ActivityDisclosure({
             aria-hidden="true"
           />
         </summary>
-        {open ? children : null}
+        {open ? <div className="stream-trace-content">{children}</div> : null}
       </details>
       {!open ? attention : null}
     </>

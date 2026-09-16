@@ -18,9 +18,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown from "react-markdown";
+import { StreamingMarkdown } from "./StreamingText";
 import type { Components } from "react-markdown";
-import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import { Virtuoso } from "react-virtuoso";
 import type { ApprovalResolutionHandler } from "../lib/codexApprovals";
 import { emptyRunView, type RunViewState } from "../lib/codexEventReducer";
@@ -45,7 +44,6 @@ import {
 } from "./TaskChatTurn";
 import { statusLabel, SubagentStatusIcon } from "./SubagentStatus";
 import {
-  transcriptMarkdownUrlTransform,
   TranscriptMarkdownImage,
 } from "./TranscriptMarkdownImage";
 
@@ -675,7 +673,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
               <ActivityDisclosure active={isActiveTranscriptTurn(turn.status)}
                 label={activityStatusLabel(turn.status, Math.max(0, (Date.parse(turn.completedAt ?? "") || Date.now()) - (Date.parse(turn.startedAt ?? "") || Date.now())))}
                 attention={<ActivityTimeline items={subagentTimeline(streamItems.filter((item) => item.kind === "activity" && ["failed", "declined", "interrupted", "inProgress", "running"].includes(item.status ?? "")))} />}>
-                <ActivityTimeline items={subagentTimeline(streamItems)} />
+                <ActivityTimeline active={isActiveTranscriptTurn(turn.status)} items={subagentTimeline(streamItems)} />
               </ActivityDisclosure>
             ) : null}
             {summaryItems.map((item) => (
@@ -686,14 +684,8 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
                 }
                 key={item.id}
               >
-                <ReactMarkdown
-                  components={SUBAGENT_MARKDOWN_COMPONENTS}
-                  {...TRANSCRIPT_MARKDOWN_PLUGINS}
-                  skipHtml
-                  urlTransform={transcriptMarkdownUrlTransform}
-                >
-                  {item.text}
-                </ReactMarkdown>
+                <StreamingMarkdown text={item.text} active={isActiveTranscriptTurn(turn.status)}
+                  components={SUBAGENT_MARKDOWN_COMPONENTS} skipHtml />
               </div>
             ))}
           </div>

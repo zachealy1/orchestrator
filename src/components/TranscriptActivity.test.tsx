@@ -54,7 +54,7 @@ describe("shared transcript activity", () => {
   });
   it("exposes streaming command output without closing it on text updates", () => {
     const view = render(<CommandsGroup commands={[command]} />);
-    fireEvent.click(screen.getByText("Output"));
+    fireEvent.click(screen.getByTitle("npm test"));
     expect(screen.getByText("first line").closest("details")).toHaveAttribute(
       "open",
     );
@@ -84,8 +84,8 @@ describe("shared transcript activity", () => {
         <ActivityTimeline items={items} />
       </ActivityDisclosure>,
     );
-    expect(screen.getByText("npm test")).toBeVisible();
-    expect(screen.getByText("Failed")).toBeVisible();
+    expect(screen.getByTitle("npm test")).toBeVisible();
+    expect(screen.getByLabelText("Failed")).toBeVisible();
   });
   it.each([
     ["running", "Working"],
@@ -100,11 +100,54 @@ describe("shared transcript activity", () => {
 it("keeps explicitly opened command output visible when execution completes", async () => {
   const user = userEvent.setup();
   const view = render(<CommandsGroup commands={[command]} />);
-  await user.click(screen.getByText("Output"));
+  await user.click(screen.getByTitle("npm test"));
   view.rerender(
     <CommandsGroup
       commands={[{ ...command, status: "completed", output: "final output" }]}
     />,
   );
   expect(screen.getByText("final output")).toBeVisible();
+});
+
+it("shows failure output and exit status in one command disclosure", async () => {
+  const user = userEvent.setup();
+  render(
+    <CommandsGroup
+      commands={[
+        {
+          ...command,
+          status: "failed",
+          durationMs: 12,
+          exitCode: 127,
+          output: "zsh: command not found: rg",
+        },
+      ]}
+    />,
+  );
+  expect(screen.getByLabelText("Failed")).toBeVisible();
+  expect(screen.queryByText("for 0s")).toBeNull();
+  expect(screen.queryByText("Output")).toBeNull();
+  expect(screen.getByText("zsh: command not found: rg")).not.toBeVisible();
+  await user.click(screen.getByTitle("npm test"));
+  expect(screen.getByText("zsh: command not found: rg")).toBeVisible();
+  expect(screen.getByText("Process exited with code 127")).toBeVisible();
+});
+
+it("animates only newly added live rows, never initial history or reopened content", () => {
+  const first: TimelineItem = {
+    kind: "event",
+    event: { id: "first", kind: "message", text: "Existing", timestamp: "" },
+  };
+  const next: TimelineItem = {
+    kind: "event",
+    event: { id: "next", kind: "message", text: "New", timestamp: "" },
+  };
+  const view = render(<ActivityTimeline active items={[first]} />);
+  expect(view.container.querySelector("[data-stream-enter]")).toBeNull();
+  view.rerender(<ActivityTimeline active items={[first, next]} />);
+  expect(view.container.querySelectorAll("[data-stream-enter]")).toHaveLength(
+    1,
+  );
+  view.rerender(<ActivityTimeline items={[first, next]} />);
+  expect(view.container.querySelector("[data-stream-enter]")).toBeNull();
 });
