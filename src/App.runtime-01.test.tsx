@@ -141,7 +141,7 @@ describe("Application runtime scenarios 1", () => {
       await user.click(screen.getByRole("button", { name: "Add workspace" }));
 
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       await waitFor(() =>
         expect(
@@ -162,7 +162,7 @@ describe("Application runtime scenarios 1", () => {
   it("opens a workspace context menu and cancels workspace removal", async () => {
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       const workspaceButton = within(workspaceNav).getByRole("button", {
         name: "orchestrator",
@@ -212,7 +212,7 @@ describe("Application runtime scenarios 1", () => {
 
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
 
       await user.click(
@@ -255,7 +255,7 @@ describe("Application runtime scenarios 1", () => {
   it("opens and closes the workspace context menu from the keyboard", async () => {
       const { user } = await renderApp();
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       const workspaceButton = within(workspaceNav).getByRole("button", {
         name: "orchestrator",

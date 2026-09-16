@@ -85,7 +85,7 @@ describe("Application runtime scenarios 2", () => {
         within(banner).getByRole("button", { name: /commit or push/i }),
       ).toHaveAttribute("aria-busy", "true");
 
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "other" }),
       );
@@ -519,8 +519,7 @@ describe("Application runtime scenarios 2", () => {
 
       expect(rows).toHaveLength(2);
       expect(rows[0]).toHaveTextContent("Build Snake Web App");
-      expect(within(rows[0] as HTMLElement).getByLabelText("Agent running"))
-        .toBeInTheDocument();
+      expect(rows[0]).toHaveAccessibleName("Build Snake Web App, agent running");
       expect(rows[1]).toHaveTextContent("Earlier completed chat");
     });
 

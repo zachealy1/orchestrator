@@ -1981,5 +1981,5 @@ export async function openSidebarChats(user: ReturnType<typeof userEvent.setup>)
   if (toggle?.getAttribute("aria-expanded") === "false") await user.click(toggle);
 }
 export function sidebarChats() {
-  return screen.getByRole("navigation", { name: "Workspaces" });
+  return screen.getByRole("navigation", { name: "Chats" });
 }

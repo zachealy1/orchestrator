@@ -1289,10 +1289,12 @@ describe("Application runtime scenarios 3", () => {
 
       await openSidebarChats(user);
       const firstDrawer = sidebarChats();
-      expect(within(firstDrawer).getByLabelText("Agent running")).toBeInTheDocument();
+      expect(within(firstDrawer).getByRole("button", {
+        name: /run in orchestrator, agent running/i,
+      })).toBeInTheDocument();
       await openSidebarChats(user);
 
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );
@@ -1375,7 +1377,7 @@ describe("Application runtime scenarios 3", () => {
       ]);
 
       const { user } = await renderApp();
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       const prompt = screen.getByLabelText("Prompt");
       await user.type(prompt, "Draft for orchestrator");
       const composer = composerInputZone();
@@ -1445,7 +1447,7 @@ describe("Application runtime scenarios 3", () => {
       await user.keyboard("{Enter}");
       await waitFor(() => expect(mocks.createChatMock).toHaveBeenCalledTimes(1));
 
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );
@@ -1513,7 +1515,7 @@ describe("Application runtime scenarios 3", () => {
       );
       expect(await screen.findByText("Remembered result.")).toBeInTheDocument();
 
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );
@@ -1583,7 +1585,7 @@ describe("Application runtime scenarios 3", () => {
         ranges: [{ startIndex: 7, endIndex: 13 }],
         scrollTop: 1_842,
       };
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );

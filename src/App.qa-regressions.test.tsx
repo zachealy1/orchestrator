@@ -99,7 +99,7 @@ describe("manual QA regressions", () => {
     };
     await commit();
     await user.click(screen.getByRole("button", { name: "Dismiss Commit and push complete" }));
-    const navigation = screen.getByRole("navigation", { name: "Workspaces" });
+    const navigation = screen.getByRole("navigation", { name: "Chats" });
     for (let cycle = 0; cycle < 2; cycle += 1) {
       await user.click(within(navigation).getByTitle(other.label));
       await user.click(within(navigation).getByTitle(workspace.label));

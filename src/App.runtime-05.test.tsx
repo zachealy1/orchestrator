@@ -400,7 +400,7 @@ describe("Application runtime scenarios 5", () => {
         await renderApp();
         // renderApp waits for account loading to start, not for the workspace
         // (and its focus listener) to finish mounting.
-        await within(screen.getByRole("navigation", { name: "Workspaces" }))
+        await within(screen.getByRole("navigation", { name: "Chats" }))
           .findByRole("button", { name: workspace.label });
         await act(async () => window.dispatchEvent(new Event("focus")));
 
@@ -1443,7 +1443,7 @@ describe("Application runtime scenarios 5", () => {
       await renderApp();
 
       const workspaceNav = screen.getByRole("navigation", {
-        name: "Workspaces",
+        name: "Chats",
       });
       expect(
         within(workspaceNav).getByRole("button", { name: workspace.label }),

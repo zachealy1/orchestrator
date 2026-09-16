@@ -145,7 +145,7 @@ describe("Application runtime scenarios 10", () => {
       scrollTop: 1_842,
     };
     const workspaceNav = screen.getByRole("navigation", {
-      name: "Workspaces",
+      name: "Chats",
     });
     await user.click(
       within(workspaceNav).getByRole("button", { name: "mobile-client" }),

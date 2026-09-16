@@ -203,7 +203,7 @@ describe("sidebar modes", () => {
     const { rerender } = render(
       <WorkspaceSidebar model={model({ mode: "chats" })} actions={handlers} />,
     );
-    const nav = screen.getByRole("navigation", { name: "Workspaces" });
+    const nav = screen.getByRole("navigation", { name: "Chats" });
     fireEvent.scroll(nav, { target: { scrollTop: 120 } });
     rerender(
       <WorkspaceSidebar model={model({ mode: "files" })} actions={handlers} />,

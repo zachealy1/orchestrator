@@ -1560,7 +1560,7 @@ describe("Application runtime scenarios 4", () => {
         expect(mocks.inspectDroppedContextPathsMock).toHaveBeenCalledOnce(),
       );
 
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );

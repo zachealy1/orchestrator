@@ -469,7 +469,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         data-tauri-drag-region={model.headerDragRegion}
       >
         <span id="workspaces-heading">
-          {model.mode === "priority" ? "Priority" : "Workspaces"}
+          {model.mode === "chats"
+            ? "Chats"
+            : model.mode === "priority"
+              ? "Priority"
+              : "Workspaces"}
         </span>
         {model.mode !== "priority" ? (
           <button
