@@ -2,6 +2,7 @@ use super::*;
 
 mod core_database;
 mod git;
+mod git_discovery;
 mod migrations;
 mod workspace_media;
 
