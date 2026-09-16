@@ -2470,7 +2470,7 @@ function formatTokenCount(runView: RunViewState) {
       runView.status === "connecting" ||
       runView.status === "running")
   ) {
-    return "0 tokens";
+    return "Token usage pending";
   }
   return "Token usage unavailable";
 }

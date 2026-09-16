@@ -5,7 +5,7 @@ clicks, or scrolls with a wheel/trackpad. Automatic transcript scrolling, idle
 windows, and background agents do not qualify. A random UUID in the local SQLite
 database identifies the installation independently of signed-in accounts.
 
-Daily uniqueness and event delivery are owned by Rust. Migration 48 appends
+Daily uniqueness and event delivery are owned by Rust. Migration 49 appends
 installation preferences and the durable daily event queue without changing
 existing migrations. The frontend passes no activity details through IPC.
 Requests use PostHog's HTTPS capture API, a ten-second timeout, and no redirects.

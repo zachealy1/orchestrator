@@ -10,7 +10,7 @@ async fn database() -> (DatabaseState, SqlitePool) {
         .await
         .unwrap();
     sqlx::raw_sql(include_str!(
-        "../../migrations/048_installation_activity.sql"
+        "../../migrations/049_installation_activity.sql"
     ))
     .execute(&pool)
     .await
