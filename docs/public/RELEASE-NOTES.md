@@ -1,31 +1,30 @@
-# Orchestrator 0.2.0-beta.2
+# Orchestrator 0.2.0-beta.3
 
 Community beta for **Apple Silicon and Intel on macOS 15+**, ad-hoc signed and **not notarized by Apple**.
 
-Download the [Apple Silicon installer](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_aarch64.dmg) or [Intel installer](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_x86_64.dmg). Open the disk image and drag Orchestrator into Applications. Read the [installation and first-launch guidance](https://github.com/zachealy1/orchestrator/blob/main/docs/public/INSTALLATION.md).
+Download the [Apple Silicon installer](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.3/Orchestrator_aarch64.dmg) or [Intel installer](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.3/Orchestrator_x86_64.dmg). Open the disk image and drag Orchestrator into Applications. Read the [installation and first-launch guidance](https://github.com/zachealy1/orchestrator/blob/main/docs/public/INSTALLATION.md).
 
-## Changes since beta.1
+## Changes since beta.2
 
-- **In-app updates:** independently signed packages for both Mac architectures, with automatic availability checks and separate **Download update** and **Install and restart** actions. Installation waits for active work to finish. Unsupported builds or unavailable feeds offer **Download latest version** directly, without a raw release-JSON error panel. Update and bug-report actions are available after sign-in.
-- **Native spellcheck:** macOS spelling checks and red underlines are enabled for prose inputs across the application.
-- **Conversation order:** steer prompts appear where they were submitted in the activity stream. Prompt submission preserves the user's selected intent through the queue and execution flow.
-- **Readable tables:** agent output uses improved Markdown table layout, cell wrapping and overflow handling in transcripts.
-- **Kanban target branches:** choose the branch used for new card branches and pull requests from the board toolbar, immediately before refresh and archive. Edit-card dropdowns no longer retain an unwanted blue highlight.
-- **Settings:** the About Orchestrator section displays the application version, warning details open on click, and section dividers and headings are more consistent.
-- **Approval labels:** tooltips use concise descriptions without redundant action prefixes.
-- **Installer presentation:** the macOS disk image uses a standard drag-to-Applications layout with dedicated background artwork.
-- **Documentation:** refreshed Chat and Kanban screenshots show the current interface using genuine activity in the fictional Taskboard Demo.
+- **Workspace navigation:** switch between Chats, Files and Priority in the sidebar, with keyboard shortcuts, chat pagination and clearer workspace context.
+- **GitLab reviews:** connect GitLab.com or self-managed HTTPS hosts and publish draft merge requests. Mixed GitHub/GitLab workspaces track each review through completion. Repositories without a connected destination retain local review.
+- **Questions during work:** answer an agent's questions while work continues, including a free-text answer, without losing the surrounding transcript.
+- **Streaming and tools:** more consistent activity labels, tool interfaces, rich results and streamed text. Hidden views pause unnecessary updates, streams are batched and Git refreshes adapt to activity.
+- **Usage and account settings:** resumed runs recover token usage more reliably; eligible accounts can redeem available Codex usage resets from Settings. Update-check feedback clears when the account popup closes.
+- **Git and Kanban fixes:** file references resolve to the active worktree, Git discovery and branch recovery are more robust, branch names preserve whole words, and newly finished cards append to In review.
+- **Installation activity:** production builds send minimal daily installation activity to PostHog by default. Disable it in **Settings → Privacy → Share installation activity**; the [privacy guide](https://github.com/zachealy1/orchestrator/blob/main/docs/public/PRIVACY.md) lists the data collected.
+- **Documentation:** five refreshed native macOS screenshots show the fictional Taskboard Demo with account details removed.
 
-Installed beta.1 copies with the matching updater key can discover this release through the [beta feed](https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json). Unconfigured source builds and older 0.1.0 copies need manual installation. Keep previous installers and back up important data before beta upgrades.
+Installed beta.1 and beta.2 copies with the matching updater key can discover this release through the [beta feed](https://raw.githubusercontent.com/zachealy1/orchestrator/update-feed/beta.json). Unconfigured source builds and older 0.1.0 copies need manual installation. Back up important data before beta upgrades. Older apps may not open a database upgraded by this version; keep backups rather than downgrading an upgraded database.
 
-## Testing and packaging
+## Validation and limitations
 
-The maintainer reports manually testing the changes and has accepted this community release. Existing required repository CI checks still apply. Packaging verifies the exact source commit, version, architectures, bundled resources, ad-hoc signatures, updater signatures, installer artwork and artifact hashes.
+Required source checks apply before publication. The release workflow verifies the selected source commit, version, both architectures, bundled resources, ad-hoc signatures, updater signatures, installer artwork and artifact hashes. Public verification receipts accompany the installers.
 
-No additional installer or update rehearsal is claimed. Generated receipts record `behavioralTesting: "not-performed"` for the packaging job; this does not describe the maintainer's separate manual testing. See the [acceptance record](https://github.com/zachealy1/orchestrator/blob/main/docs/release-acceptance.md) for scope and historical limitations.
+A new manual testing campaign, clean-machine installation or two-version update rehearsal is not claimed for beta.3. Package receipts record `behavioralTesting: "not-performed"`. See the [acceptance record](https://github.com/zachealy1/orchestrator/blob/main/docs/release-acceptance.md) for scope and historical evidence.
 
 macOS may require **Open Anyway** at first launch or ask for permissions again after an update. Updater signatures and checksums verify integrity, not Apple approval. Browser, Computer Use and Plugins remain experimental and can depend on separately installed upstream components.
 
-The bundled engine and GitHub CLI use your own supported accounts. Account usage limits or charges still apply; this release adds no paid update infrastructure.
+The bundled engine, GitHub CLI and GitLab CLI use your own supported accounts. Provider usage limits and charges still apply.
 
 Report reproducible issues through [public issues](https://github.com/zachealy1/orchestrator/issues/new/choose), without credentials, personal paths or private transcripts.
