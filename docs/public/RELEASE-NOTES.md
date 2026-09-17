@@ -6,7 +6,7 @@ Download the [Apple Silicon installer](https://github.com/zachealy1/orchestrator
 
 ## Changes since beta.2
 
-- **Workspace navigation:** switch between Chats, Files and Priority in the sidebar, with keyboard shortcuts, chat pagination and clearer workspace context.
+- **Workspace navigation:** switch between Chats, Files and Priority in the sidebar, with keyboard shortcuts, chat pagination and clearer workspace context. Open Chat with `⌘4` and Kanban with `⌘5`.
 - **GitLab reviews:** connect GitLab.com or self-managed HTTPS hosts and publish draft merge requests. Mixed GitHub/GitLab workspaces track each review through completion. Repositories without a connected destination retain local review.
 - **Questions during work:** answer an agent's questions while work continues, including a free-text answer, without losing the surrounding transcript.
 - **Streaming and tools:** more consistent activity labels, tool interfaces, rich results and streamed text. Hidden views pause unnecessary updates, streams are batched and Git refreshes adapt to activity.

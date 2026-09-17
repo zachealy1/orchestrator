@@ -2,7 +2,7 @@
 
 ## Community beta.3 release request — 2026-09-17
 
-The maintainer explicitly requested a full release, merging `release` into `main` and replacing README screenshots after removing account details. Preparation starts from `098457a` on `release`, synchronizes version **0.2.0-beta.3**, and updates documentation and screenshots. Publish from the exact resulting main commit only after required source checks pass. The release tag, package receipts and workflow checkout must identify that same commit.
+The maintainer explicitly requested a full release, merging `release` into `main` and replacing README screenshots after removing account details. Preparation starts from `098457a` on `release`, synchronizes version **0.2.0-beta.3**, and updates documentation and screenshots. Before publication, the maintainer also requested Chat on `⌘4` and Kanban on `⌘5`; the shared shortcut registry, hints, accessibility labels and regression tests reflect that mapping. Publish from the exact resulting main commit only after required source checks pass. The release tag, package receipts and workflow checkout must identify that same commit.
 
 This request authorizes publication, but does not assert a new manual testing campaign. Preserve beta.2's manual-testing report below as historical evidence. No clean-machine installation, supported-OS matrix or two-version update rehearsal is claimed for beta.3. Screenshot inspection is documentation validation, not behavioral acceptance of the release packages.
 

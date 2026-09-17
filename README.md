@@ -91,7 +91,7 @@ Explore local run activity, token totals and outcomes by workspace and date rang
 - **Plans and Goals:** Review a proposed plan before implementation, or pursue an explicit longer-running goal.
 - **Generated-image previews:** Explore concepts in the conversation; copy images into a project when you explicitly request an asset.
 - **Multi-repository workspaces:** Give agents the workspace context and review changes repository by repository.
-- **Keyboard navigation:** Use `⌘K` for actions, `⌘N` for a new chat and `⌘/` for shortcut help.
+- **Keyboard navigation:** Use `⌘4` for Chat, `⌘5` for Kanban, `⌘K` for actions, `⌘N` for a new chat and `⌘/` for shortcut help.
 - **Optional integrations:** Explore Plugins, Browser and Computer Use with their [experimental requirements and limitations](docs/public/INTEGRATIONS.md).
 
 ## Build from source
