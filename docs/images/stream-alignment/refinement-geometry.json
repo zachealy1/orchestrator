@@ -1,0 +1,137 @@
+{
+  "wide": {
+    "chevronGap": 7,
+    "measured": [
+      {
+        "class": "stream-event-list",
+        "gaps": [
+          18,
+          18,
+          18,
+          18,
+          18
+        ]
+      },
+      {
+        "class": "structured-activity is-completed",
+        "gaps": [
+          18
+        ]
+      },
+      {
+        "class": "activity-artifact",
+        "gaps": [
+          18,
+          18
+        ]
+      },
+      {
+        "class": "structured-activity is-completed",
+        "gaps": [
+          18,
+          18
+        ]
+      },
+      {
+        "class": "activity-widget ",
+        "gaps": [
+          18
+        ]
+      }
+    ],
+    "width": 850
+  },
+  "narrow": {
+    "chevronGap": 7,
+    "fonts": [
+      {
+        "fontSize": "15.2px",
+        "lineHeight": "22.04px",
+        "selector": ".run-live-metrics"
+      },
+      {
+        "fontSize": "15.2px",
+        "lineHeight": "22.04px",
+        "selector": ".stream-secondary-metrics"
+      },
+      {
+        "fontSize": "15.2px",
+        "lineHeight": "22.04px",
+        "selector": ".mixed-activity-group>summary"
+      },
+      {
+        "fontSize": "15.2px",
+        "lineHeight": "22.04px",
+        "selector": ".command-summary"
+      },
+      {
+        "fontSize": "15.2px",
+        "lineHeight": "22.04px",
+        "selector": ".activity-status"
+      }
+    ],
+    "groups": [
+      {
+        "class": "stream-event-list",
+        "gaps": [
+          18,
+          18,
+          18,
+          18,
+          18
+        ]
+      },
+      {
+        "class": "run-activity-items",
+        "gaps": [
+          18,
+          18
+        ]
+      },
+      {
+        "class": "structured-activity is-completed",
+        "gaps": [
+          18
+        ]
+      },
+      {
+        "class": "activity-artifact",
+        "gaps": [
+          18,
+          18
+        ]
+      },
+      {
+        "class": "structured-activity is-completed",
+        "gaps": [
+          18,
+          18
+        ]
+      },
+      {
+        "class": "activity-widget ",
+        "gaps": [
+          18
+        ]
+      }
+    ],
+    "headerGaps": [
+      18,
+      18,
+      18,
+      18
+    ],
+    "overflow": 0,
+    "reducedMotionStyles": [
+      {
+        "animation": "none",
+        "selector": ".stream-working-label"
+      },
+      {
+        "animation": "none",
+        "selector": ".stream-trace-content"
+      }
+    ],
+    "width": 360
+  }
+}

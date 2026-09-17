@@ -3,11 +3,13 @@ import { AsyncQuestions } from "../features/asyncQuestions/AsyncQuestions";
 import { readableAsyncReply } from "../lib/asyncUserInput";
 import { StreamingMarkdown } from "./StreamingText";
 import { ActivityTimeline, ActivityDisclosure, activityStatusLabel, attentionTimelineItems } from "./TranscriptActivity";
+import { StreamHostProvider } from "./StreamHost";
+import { formatTokenCount } from "../lib/streamMetrics";
 import { usePreviewableMarkdownComponents } from "./useTranscriptMarkdown";
 import {
   Ban,
   Check,
-  ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock,
   ExternalLink,
@@ -130,6 +132,8 @@ export type TranscriptTurnModel = {
 };
 
 export type TranscriptTurnActions = {
+  onDraftToolMessage?: (text: string) => void;
+  onInspectActivitySubagent?: (profileKey: string, threadId: string) => void;
   onEditingPromptChange: (prompt: string) => void;
   onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
   onCancelEdit: () => void;
@@ -196,6 +200,9 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onPendingInteractionPageChange,
   } = actions;
   return (
+    <StreamHostProvider profileKey={entry.executionSettings?.settings.profileKey ?? "default"} threadId={entry.runView.threadId} turnId={entry.runView.turnId}
+      runId={entry.historicalActivity?.source === "persisted-run" ? entry.runId : null} onDraft={actions.onDraftToolMessage} onInspectSubagent={actions.onInspectActivitySubagent}
+      planView={<NativePlanCard entry={entry} onImplementPlan={onImplementPlan} onRevisePlan={onRevisePlan} onCancelPlan={onCancelPlan} onOpenTranscriptLink={onOpenTranscriptLink} expanded={planExpanded} onDisclosureChange={onPlanDisclosureChange} />}>
     <div className="task-chat-run">
       <div
         className={`submitted-prompt-stack ${editable ? "editable" : ""} ${
@@ -302,6 +309,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
         />
       </article>
     </div>
+    </StreamHostProvider>
   );
 });
 
@@ -522,6 +530,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     runView.status === "failed" ||
     runView.status === "interrupted";
   const timelineItems = buildTimelineItems(runView);
+  const timelineSections = splitTimelineAtSteers(timelineItems);
+  const firstActivitySection = timelineSections.find(section => section.items.length > 0)?.id;
   const hasSteers = timelineItems.some((item) => item.kind === "steer");
   const hasTimeline = timelineItems.length > 0;
   const finalAnswer = selectAssistantFinalAnswer(runView, completed);
@@ -546,10 +556,11 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
       {hasSteers ? (
         <>
           <RunMetrics runView={runView} />
-          {splitTimelineAtSteers(timelineItems).map((section, index) => (
+          {timelineSections.map((section, index) => (
             <Fragment key={section.id}>
               {section.items.length > 0 ? <RunTraceDropdown entry={entry} runView={runView} items={section.items}
-                label={`Activity ${index + 1}`} onOpenTranscriptLink={onOpenTranscriptLink} /> : null}
+                label={`Activity ${index + 1}`} disclosureKey={section.id === firstActivitySection ? "trace" : section.id}
+                onLoadHistoricalActivity={section.id === firstActivitySection ? onLoadHistoricalActivity : undefined} onOpenTranscriptLink={onOpenTranscriptLink} /> : null}
               {section.steer ? <SteerPrompt event={section.steer} onOpenTranscriptLink={onOpenTranscriptLink} /> : null}
             </Fragment>
           ))}
@@ -562,7 +573,7 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         runView.status === "connecting" ? <PreparingRunStatus /> : <p className="stream-placeholder">Working…</p>
       ) : null}
       <AsyncQuestions entryClientId={entry.clientId} threadId={runView.threadId} runView={runView} />
-      <NativePlanCard
+      {!runView.activities?.order.some(k => runView.activities?.byKey[k].itemType === "plan") ? <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
         onRevisePlan={onRevisePlan}
@@ -570,8 +581,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         onOpenTranscriptLink={onOpenTranscriptLink}
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
-      />
-      <GeneratedImagePreviews runView={runView} />
+      /> : null}
+      {!runView.activities?.order.some(k => runView.activities?.byKey[k].itemType === "imageGeneration") ? <GeneratedImagePreviews runView={runView} /> : null}
       {showSummary ? (
         <RunSummary
           key="assistant-final-response"
@@ -901,12 +912,12 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         >
           {isExpanded ? (
             <>
-              Show fewer files <ChevronUp size={15} aria-hidden="true" />
+              Show fewer files <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
             </>
           ) : (
             <>
               Show {hiddenFileCount} more {hiddenFileCount === 1 ? "file" : "files"}{" "}
-              <ChevronDown size={15} aria-hidden="true" />
+              <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
             </>
           )}
         </button>
@@ -1011,6 +1022,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   runView,
   items,
   label,
+  disclosureKey,
   onLoadHistoricalActivity,
   onOpenTranscriptLink,
 }: {
@@ -1018,6 +1030,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   runView: RunViewState;
   items?: TimelineItem[];
   label?: string;
+  disclosureKey?: string;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
@@ -1026,15 +1039,16 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   const onExpand = useCallback(() => {
     if (entry.historicalActivity?.status === "available") onLoadHistoricalActivity?.(entry);
   }, [entry, onLoadHistoricalActivity]);
-  return <ActivityDisclosure active={active}
+  return <ActivityDisclosure active={active} disclosureKey={disclosureKey}
     label={activityStatusLabel(runView.status, runView.elapsedMs)}
     metrics={label ?? formatTokenCount(runView)} ariaLabel={label ?? "Run trace"} onExpand={onExpand}
     attention={<RunTimeline items={attentionTimelineItems(timeline)} onOpenTranscriptLink={onOpenTranscriptLink} />}>
     {entry.historicalActivity?.status === "loading" ? <p className="historical-activity-status">Loading activity...</p> : null}
     {entry.historicalActivity?.status === "error" ? <div className="historical-activity-status error">
       <span>{entry.historicalActivity.error ?? "Activity could not be loaded."}</span>
-      <button type="button" onClick={() => onLoadHistoricalActivity?.(entry)}>Retry</button>
+      <button className="icon-button activity-icon-button" type="button" aria-label="Retry" data-tooltip="Retry" onClick={() => onLoadHistoricalActivity?.(entry)}><RotateCcw size={16} /></button>
     </div> : null}
+    {entry.historicalActivity?.status === "loaded" && entry.historicalActivity.nextCursor && onLoadHistoricalActivity ? <button className="icon-button activity-icon-button" type="button" aria-label="Load older activity" data-tooltip="Load older activity" onClick={() => onLoadHistoricalActivity(entry)}><ChevronUp size={16} /></button> : null}
     <RunTimeline items={timeline} active={active} onOpenTranscriptLink={onOpenTranscriptLink} />
   </ActivityDisclosure>;
 });
@@ -1568,11 +1582,7 @@ const NativePlanCard = memo(function NativePlanCard({
             });
           }}
         >
-          {isExpanded ? (
-            <ChevronUp size={15} aria-hidden="true" />
-          ) : (
-            <ChevronDown size={15} aria-hidden="true" />
-          )}
+          <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
           {isExpanded ? "Hide full plan" : "Show full plan"}
         </button>
       ) : null}
@@ -2408,22 +2418,4 @@ function approvalRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function formatTokenCount(runView: RunViewState) {
-  if (
-    runView.tokenUsage?.turnTokens !== null &&
-    runView.tokenUsage?.turnTokens !== undefined
-  ) {
-    return `${runView.tokenUsage.turnTokens.toLocaleString()} tokens`;
-  }
-  if (
-    runView.tokenUsage === null &&
-    (runView.status === "idle" ||
-      runView.status === "connecting" ||
-      runView.status === "running")
-  ) {
-    return "Token usage pending";
-  }
-  return "Token usage unavailable";
 }

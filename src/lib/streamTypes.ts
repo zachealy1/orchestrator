@@ -7,6 +7,7 @@ export type StreamActivityEvent = {
   text: string;
   timestamp: string;
   activityIds?: string[];
+  activityKeys?: string[];
   identity?: StreamIdentity;
   streaming?: boolean;
   statusLabel?: string;
@@ -20,6 +21,7 @@ export type StreamSteerEvent = {
   contextFiles: ComposerContextFile[];
   delivery: "pending" | "sent";
   activityIds?: never;
+  activityKeys?: never;
   asyncReplyClientId?: string | null;
   asyncReplyServerId?: string | null;
 };

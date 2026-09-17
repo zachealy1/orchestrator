@@ -52,6 +52,8 @@ mod paths;
 mod preflight;
 mod process;
 mod web_preview;
+mod stream_projection;
+mod widget_sandbox;
 mod workspace;
 
 use agent_notifications::AgentNotificationState;
@@ -89,6 +91,10 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             codex_projected_subagent_thread_read,
             codex_default_profile_turn_activity,
             codex_persisted_run_activity,
+            stream_projection::codex_activity_item_read,
+            widget_sandbox::widget_sandbox_create,
+            widget_sandbox::widget_sandbox_close,
+            widget_sandbox::save_activity_resource,
             codex_default_profile_thread_transcript_sync,
             codex_default_profile_thread_transcript_cancel,
             codex_resolve_server_request,
@@ -210,6 +216,8 @@ pub fn run() {
 
     let command_builder = command_builder();
     let app = tauri::Builder::default()
+        .manage(widget_sandbox::WidgetSandboxState::default())
+        .register_uri_scheme_protocol("orchestrator-widget", |context, request| widget_sandbox::response(context.app_handle(), &request))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             present_main_window(app);
         }))

@@ -53,6 +53,7 @@ type Props = {
   sections: WorkspaceGitDiffSection[];
   resolvedTheme: ResolvedTheme;
   layout: DiffLayout;
+  recordedPatch?: boolean;
 };
 type PreparedSemanticRow = {
   id: string;
@@ -97,6 +98,7 @@ export const DiffPreview = memo(function DiffPreview({
   sections,
   resolvedTheme,
   layout,
+  recordedPatch = false,
 }: Props) {
   const { codePreviewHighlighting } = useAppServices();
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -110,11 +112,12 @@ export const DiffPreview = memo(function DiffPreview({
         baseContent: section.baseContent,
         headContent: section.headContent,
         diffContent: section.content,
+        patchOnly: recordedPatch,
         baseTruncated: section.baseTruncated,
         headTruncated: section.headTruncated,
       })),
     }),
-    [path, sections],
+    [path, sections, recordedPatch],
   );
   const preparationIdentity = useMemo(
     () => diffDocumentIdentity(preparationInput),
@@ -396,7 +399,8 @@ export const DiffPreview = memo(function DiffPreview({
     <div
       ref={previewRef}
       className={`diff-preview ${layout}${overviewViewport.scrollable ? " overview-visible" : ""}`}
-      aria-label="Full file diff preview"
+      style={recordedPatch ? { height: document ? Math.min(Math.max(totalSize + 2, 50), 320) : 80 } : undefined}
+      aria-label={recordedPatch ? "Recorded edit diff preview" : "Full file diff preview"}
       data-render-mode={document?.highlightingMode ?? "preparing"}
       data-row-height={DIFF_ROW_HEIGHT_PX}
       data-wrap-columns={wrapColumns}

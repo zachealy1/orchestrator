@@ -5,6 +5,7 @@ import App from "./App";
 import { OrchestratorTooltipLayer } from "./components/OrchestratorTooltipLayer";
 import TranscriptRestoreDiagnostics from "./transcriptRestoreDiagnostics";
 import TranscriptScrollDiagnostics from "./transcriptScrollDiagnostics";
+import StreamAlignmentDiagnostics from "./streamAlignmentDiagnostics";
 import TranscriptWorkspaceReturnDiagnostics from "./transcriptWorkspaceReturnDiagnostics";
 import { initializeTheme } from "./lib/theme";
 import { AppServices, AppServicesProvider } from "./runtime/AppServices";
@@ -26,7 +27,7 @@ import.meta.hot?.dispose(disposeServices);
 function ApplicationRoot() {
   return (
     <AppServicesProvider services={services}>
-      {import.meta.env.VITE_TRANSCRIPT_RESTORE_PROFILE === "1" ? (
+      {import.meta.env.VITE_STREAM_ALIGNMENT_PROFILE === "1" ? <StreamAlignmentDiagnostics /> : import.meta.env.VITE_TRANSCRIPT_RESTORE_PROFILE === "1" ? (
         <TranscriptRestoreDiagnostics />
       ) : import.meta.env.VITE_TRANSCRIPT_WORKSPACE_RETURN_PROFILE === "1" ? (
         <TranscriptWorkspaceReturnDiagnostics />

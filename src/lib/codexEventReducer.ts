@@ -32,6 +32,7 @@ import {
   type ToolActivityStatus,
 } from "./toolActivity";
 import { recoverRetriedToolFailures } from "./toolActivityRecovery";
+import { emptyActivityStore, reduceStreamActivity, type StreamActivityStore, type CommandAction } from "./streamActivity";
 
 export type { TokenUsage } from "./contextUsage";
 export type { RunToolActivity } from "./toolActivity";
@@ -54,13 +55,17 @@ export type RunCommandActivity = {
   id: string;
   exitCode?: number | null;
   command: string;
+  cwd?: string;
+  commandActions?: CommandAction[];
+  detailsAvailable?: boolean;
   status:
     | "pending"
     | "awaiting-approval"
     | "running"
     | "completed"
     | "failed"
-    | "declined";
+    | "declined"
+    | "interrupted";
   durationMs: number | null;
   output: string;
 };
@@ -88,6 +93,9 @@ export type PendingInteractionRef = {
 };
 
 export type RunViewState = {
+  profileKey?: string;
+  activities?: StreamActivityStore;
+  historicalStreamEvents?: Array<{ method: string; params: Record<string, unknown> }>;
   status: "idle" | "connecting" | "running" | "completed" | "failed" | "interrupted";
   threadId: string | null;
   turnId: string | null;
@@ -161,6 +169,39 @@ export function applyCodexMessage(
   state: RunViewState,
   message: CodexMessage,
 ): RunViewState {
+  const params = readObject(message.params);
+  if (state.threadId && readString(params.threadId) && params.threadId !== state.threadId) return state;
+  if (state.turnId && readString(params.turnId) && params.turnId !== state.turnId && /^(item|hook|turn)\//.test(message.method ?? "") && message.method !== "turn/started") return state;
+  const next = applyLegacyCodexMessage(state, message);
+  const activities = reduceStreamActivity(state.activities ?? emptyActivityStore, message, {
+    profileKey: state.profileKey, threadId: next.threadId, turnId: next.turnId,
+  });
+  if (activities === state.activities || (!state.activities && !activities.order.length)) return next;
+  let streamEvents = next.streamEvents;
+  const commandActivities = new Map(activities.order.flatMap(k => { const a = activities.byKey[k]; return a.payload.kind === "command" ? [[a.id, a] as const] : []; }));
+  for (const key of activities.order.slice(state.activities?.order.length ?? 0)) {
+    const activity = activities.byKey[key];
+    if (state.activities?.byKey[key]) continue;
+    const existing = streamEvents.findIndex(e => e.activityIds?.includes(activity.id) && !e.activityKeys?.length);
+    if (existing >= 0) {
+      streamEvents = streamEvents.map((event, index) => index === existing && event.kind !== "steer" ? { ...event, activityKeys: [key] } : event);
+      continue;
+    }
+    streamEvents = streamEvents.filter(e => !(e.kind === "activity" && e.text === "Thinking" && e === streamEvents[streamEvents.length - 1]));
+    streamEvents = [...streamEvents, { id: `activity:${key}`, kind: activity.payload.kind === "edit" ? "file" : "activity", text: activity.label,
+      timestamp: new Date().toISOString(), activityIds: [activity.id], activityKeys: [key] }];
+  }
+  const commands = next.commands.map(command => {
+    const activity = commandActivities.get(command.id);
+    if (!activity || activity.payload.kind !== "command") return command;
+    return { ...command, ...(activity.payload.cwd ? { cwd: activity.payload.cwd } : {}),
+      ...(activity.payload.actions.length ? { commandActions: activity.payload.actions } : {}),
+      ...(activity.status === "interrupted" ? { status: "interrupted" as const } : {}) };
+  });
+  return { ...next, activities, streamEvents, commands };
+}
+
+function applyLegacyCodexMessage(state: RunViewState, message: CodexMessage): RunViewState {
   const method = message.method;
   const params = (message.params ?? {}) as Record<string, unknown>;
 
@@ -246,7 +287,7 @@ export function applyCodexMessage(
       return {
         ...state,
         threadId: readString(params.threadId) ?? state.threadId,
-        turnId: readString(params.turnId) ?? state.turnId,
+        turnId: state.turnId ?? readString(params.turnId),
         tokenUsageStartTotal: baseline.total,
         tokenUsageStartCachedInput: baseline.cachedInput,
         tokenUsage: tokenUsage ?? state.tokenUsage,
@@ -292,7 +333,7 @@ export function applyCodexMessage(
       const editedFiles = extractEditedFiles(params, diff);
       return {
         ...appendStreamEvent(
-          mergeEditedFiles(removeTrailingThinkingEvent(state), editedFiles),
+          typeof params.diff === "string" ? { ...removeTrailingThinkingEvent(state), editedFiles } : mergeEditedFiles(removeTrailingThinkingEvent(state), editedFiles),
           "file",
           editedFiles.length > 0
             ? `Edited ${editedFiles.length} ${editedFiles.length === 1 ? "file" : "files"}`

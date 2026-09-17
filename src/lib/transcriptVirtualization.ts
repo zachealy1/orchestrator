@@ -16,6 +16,8 @@ export type TranscriptGeometryEntry = {
 };
 
 export class TranscriptGeometryCache {
+  activityRevision = 0;
+  invalidateActivityGeometry() { this.activityRevision += 1; }
   readonly #measurements = new BoundedLruCache<string, number>(
     TRANSCRIPT_MEASUREMENT_CACHE_LIMIT,
   );
@@ -66,6 +68,7 @@ export function buildTranscriptMeasurementKey(
     scope,
     entry.clientId,
     getTranscriptWidthBucket(width),
+    `activities-v3:${cache?.activityRevision ?? 0}`,
     getTranscriptEntryFingerprint(entry, cache),
   ].join(":");
 }
@@ -205,6 +208,7 @@ function getTranscriptEntryFingerprint(
     entry.prompt,
     runView.finalMessage,
     runView.error ?? "",
+    JSON.stringify(runView.activities ?? null),
     ...runView.streamEvents.flatMap((event) => [event.kind, event.text]),
     ...runView.commands.flatMap((command) => [
       command.id,

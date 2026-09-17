@@ -78,6 +78,7 @@ export type SubagentTranscriptItem =
   | {
       id: string;
       kind: "activity";
+      protocolItem?: unknown;
       activityKind: "command" | "file" | "mcp" | "collaboration" | "web";
       label: string;
       status: string | null;

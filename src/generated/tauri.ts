@@ -28,6 +28,10 @@ export const commands = {
 	codexProjectedSubagentThreadRead: (accountId: number | null, profileKey: string, threadId: string) => __TAURI_INVOKE<ProjectedSubagentThread>("codex_projected_subagent_thread_read", { accountId, profileKey, threadId }),
 	codexDefaultProfileTurnActivity: (threadId: string, turnId: string, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_default_profile_turn_activity", { threadId, turnId, cursor, limit }),
 	codexPersistedRunActivity: (runId: number, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_persisted_run_activity", { runId, cursor, limit }),
+	codexActivityItemRead: (profileKey: string, runId: number | null, threadId: string, turnId: string, itemId: string) => __TAURI_INVOKE<unknown>("codex_activity_item_read", { profileKey, runId, threadId, turnId, itemId }),
+	widgetSandboxCreate: (html: string, policy: unknown) => __TAURI_INVOKE<string>("widget_sandbox_create", { html, policy }),
+	widgetSandboxClose: (token: string) => __TAURI_INVOKE<void>("widget_sandbox_close", { token }),
+	saveActivityResource: (name: string, text: string | null, blob: string | null) => __TAURI_INVOKE<boolean>("save_activity_resource", { name, text, blob }),
 	codexDefaultProfileThreadTranscriptSync: (threadId: string, sourceVersion: string, pageSize: number | null, requestId: string) => __TAURI_INVOKE<ExternalTranscriptSnapshot>("codex_default_profile_thread_transcript_sync", { threadId, sourceVersion, pageSize, requestId }),
 	codexDefaultProfileThreadTranscriptCancel: (requestId: string) => __TAURI_INVOKE<null>("codex_default_profile_thread_transcript_cancel", { requestId }),
 	codexResolveServerRequest: (accountId: number, id: unknown, requestToken: string, result: unknown) => __TAURI_INVOKE<null>("codex_resolve_server_request", { accountId, id, requestToken, result }),
@@ -451,6 +455,7 @@ export type HistoricalToolActivityDetail = {
 };
 
 export type HistoricalTurnActivityResponse = {
+	events: unknown[],
 	asyncMessages: unknown[],
 	commands: HistoricalCommandActivity[],
 	editedFiles: HistoricalEditedFile[],

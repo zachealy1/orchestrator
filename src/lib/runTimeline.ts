@@ -1,5 +1,6 @@
 import { parseAsyncReplies } from "./asyncUserInput";
 import { reasoningItemKey } from "./reasoningStream";
+import { standaloneActivity, type StreamActivity } from "./streamActivity";
 import type {
   RunCommandActivity,
   RunToolActivity,
@@ -9,6 +10,7 @@ import type {
 } from "./codexEventReducer";
 
 export type TimelineItem =
+  | { kind: "activities"; id: string; activities: StreamActivity[] }
   | { kind: "event"; event: StreamActivityEvent }
   | { kind: "steer"; event: StreamSteerEvent }
   | { kind: "commands"; id: string; commands: RunCommandActivity[] }
@@ -35,6 +37,7 @@ export function splitTimelineAtSteers(items: TimelineItem[]): TimelineSection[] 
 }
 
 export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
+  if (runView.activities?.order.length) return buildStructuredTimeline(runView);
   const sections = splitTimelineAtSteers(runView.streamEvents.filter(event => event.kind !== "steer" || !parseAsyncReplies(event.text)).map((event) =>
     event.kind === "steer" ? { kind: "steer", event } : { kind: "event", event },
   ));
@@ -127,6 +130,40 @@ export function buildTimelineItems(runView: RunViewState): TimelineItem[] {
     } else grouped.push(item);
     return grouped;
   }, []);
+}
+
+function buildStructuredTimeline(runView: RunViewState): TimelineItem[] {
+  const store = runView.activities!;
+  const emitted = new Set<string>();
+  const result: TimelineItem[] = [];
+  const emit = (activity: StreamActivity) => {
+    if (emitted.has(activity.key)) return;
+    emitted.add(activity.key);
+    const approval = runView.approvalRequests.find(r => r.itemId === activity.id && ["pending", "submitting"].includes(r.status));
+    const displayed = approval ? { ...activity, status: "awaiting-approval" as const } : activity;
+    const previous = result[result.length - 1];
+    if (previous?.kind === "activities" && !standaloneActivity(displayed) && !previous.activities.some(standaloneActivity)) previous.activities.push(displayed);
+    else result.push({ kind: "activities", id: activity.key, activities: [displayed] });
+  };
+  const activitiesById = new Map(store.order.map(k => [store.byKey[k].id, store.byKey[k]]));
+  for (const event of runView.streamEvents) {
+    if (event.kind === "steer") {
+      if (!parseAsyncReplies(event.text)) result.push({ kind: "steer", event });
+      continue;
+    }
+    const owned = event.activityKeys?.length ? event.activityKeys.flatMap(key => store.byKey[key] ? [store.byKey[key]] : [])
+      : (event.activityIds ?? []).flatMap(id => { const activity = activitiesById.get(id); return activity ? [activity] : []; });
+    if (owned.length) { owned.forEach(emit); continue; }
+    if (shouldHideFinalMessageEvent(runView, event)) continue;
+    if (!event.text || event.text === "Thinking") continue;
+    if (["Updated plan", "Plan ready for review"].includes(event.text) && store.order.some(k => store.byKey[k].payload.kind === "plan")) continue;
+    if (event.kind === "file" && runView.editedFiles.length) continue;
+    if (event.kind === "reasoning" && event.identity?.target === "reasoningContent" &&
+      Object.values(runView.reasoningItems?.[reasoningItemKey(event.identity)]?.summaries ?? {}).some(text => text.trim())) continue;
+    result.push({ kind: "event", event });
+  }
+  store.order.map(k => store.byKey[k]).forEach(emit);
+  return result;
 }
 
 function shouldHideFinalMessageEvent(runView: RunViewState, event: StreamActivityEvent) {

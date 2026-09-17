@@ -202,6 +202,8 @@ pub(crate) struct HistoricalToolActivity {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoricalTurnActivityResponse {
     #[specta(type = Vec<specta_typescript::Unknown>)]
+    pub(crate) events: Vec<Value>,
+    #[specta(type = Vec<specta_typescript::Unknown>)]
     pub(crate) async_messages: Vec<Value>,
     pub(crate) commands: Vec<HistoricalCommandActivity>,
     pub(crate) edited_files: Vec<HistoricalEditedFile>,
