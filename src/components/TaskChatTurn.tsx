@@ -1,29 +1,26 @@
+import { PendingInteractionNavigator } from "./PendingInteractionNavigator";
+import { AsyncQuestions } from "../features/asyncQuestions/AsyncQuestions";
+import { readableAsyncReply } from "../lib/asyncUserInput";
+import { StreamingMarkdown } from "./StreamingText";
+import { ActivityTimeline, ActivityDisclosure, activityStatusLabel, attentionTimelineItems } from "./TranscriptActivity";
+import { StreamHostProvider } from "./StreamHost";
+import { formatTokenCount } from "../lib/streamMetrics";
+import { usePreviewableMarkdownComponents } from "./useTranscriptMarkdown";
 import {
-  Activity,
   Ban,
-  BrainCircuit,
   Check,
-  ChevronDown,
-  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Clock,
   ExternalLink,
   FileDiff,
-  FileText,
-  GitPullRequest,
   Globe2,
   Image as ImageIcon,
   Loader2,
-  MessageSquare,
   Pencil,
   RotateCcw,
-  Search,
   ShieldAlert,
   ShieldCheck,
-  Terminal,
-  Users,
-  Wrench,
   X,
 } from "lucide-react";
 import {
@@ -43,14 +40,10 @@ import type {
   ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
-import type { Components } from "react-markdown";
 import { TRANSCRIPT_MARKDOWN_PLUGINS } from "../lib/markdownPlugins";
 import type {
-  RunCommandActivity,
   RunEditedFile,
-  RunToolActivity,
   RunViewState,
-  StreamActivityEvent,
   StreamSteerEvent,
 } from "../lib/codexEventReducer";
 import {
@@ -83,7 +76,6 @@ import {
 } from "../lib/summaryLinks";
 import {
   findSubmittedPromptWebLinks,
-  normalizeExternalTranscriptUrl,
 } from "../lib/transcriptLinks";
 import { prepareStreamingMarkdown } from "../lib/streamingMarkdown";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
@@ -96,7 +88,6 @@ import type {
 import { GeneratedImagePreviews } from "./GeneratedImagePreviews";
 import {
   transcriptMarkdownUrlTransform,
-  TranscriptMarkdownImage,
 } from "./TranscriptMarkdownImage";
 export type { TaskChatEntry } from "../features/conversations/types";
 import {
@@ -141,6 +132,8 @@ export type TranscriptTurnModel = {
 };
 
 export type TranscriptTurnActions = {
+  onDraftToolMessage?: (text: string) => void;
+  onInspectActivitySubagent?: (profileKey: string, threadId: string) => void;
   onEditingPromptChange: (prompt: string) => void;
   onSubmitEdit: (entry: TaskChatEntry, prompt: string) => void;
   onCancelEdit: () => void;
@@ -207,6 +200,9 @@ export const TaskChatTurn = memo(function TaskChatTurn({
   onPendingInteractionPageChange,
   } = actions;
   return (
+    <StreamHostProvider profileKey={entry.executionSettings?.settings.profileKey ?? "default"} threadId={entry.runView.threadId} turnId={entry.runView.turnId}
+      runId={entry.historicalActivity?.source === "persisted-run" ? entry.runId : null} onDraft={actions.onDraftToolMessage} onInspectSubagent={actions.onInspectActivitySubagent}
+      planView={<NativePlanCard entry={entry} onImplementPlan={onImplementPlan} onRevisePlan={onRevisePlan} onCancelPlan={onCancelPlan} onOpenTranscriptLink={onOpenTranscriptLink} expanded={planExpanded} onDisclosureChange={onPlanDisclosureChange} />}>
     <div className="task-chat-run">
       <div
         className={`submitted-prompt-stack ${editable ? "editable" : ""} ${
@@ -313,6 +309,7 @@ export const TaskChatTurn = memo(function TaskChatTurn({
         />
       </article>
     </div>
+    </StreamHostProvider>
   );
 });
 
@@ -533,6 +530,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
     runView.status === "failed" ||
     runView.status === "interrupted";
   const timelineItems = buildTimelineItems(runView);
+  const timelineSections = splitTimelineAtSteers(timelineItems);
+  const firstActivitySection = timelineSections.find(section => section.items.length > 0)?.id;
   const hasSteers = timelineItems.some((item) => item.kind === "steer");
   const hasTimeline = timelineItems.length > 0;
   const finalAnswer = selectAssistantFinalAnswer(runView, completed);
@@ -554,57 +553,27 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
       className={`run-output-surface ${completed ? "completed" : "running"}`}
       aria-label={completed ? undefined : "Live run output"}
     >
-      {completed ? (
-        hasSteers ? (
-          <>
-            <RunMetrics runView={runView} />
-            {splitTimelineAtSteers(timelineItems).map((section, index) => (
-              <Fragment key={section.id}>
-                {section.items.length > 0 ? (
-                  <RunTraceDropdown
-                    entry={entry}
-                    runView={runView}
-                    items={section.items}
-                    label={`Activity ${index + 1}`}
-                    onOpenTranscriptLink={onOpenTranscriptLink}
-                  />
-                ) : null}
-                {section.steer ? (
-                  <SteerPrompt event={section.steer} onOpenTranscriptLink={onOpenTranscriptLink} />
-                ) : null}
-              </Fragment>
-            ))}
-          </>
-        ) : hasTrace ? (
-          <RunTraceDropdown
-            entry={entry}
-            runView={runView}
-            onLoadHistoricalActivity={onLoadHistoricalActivity}
-            onOpenTranscriptLink={onOpenTranscriptLink}
-          />
-        ) : (
-          <RunMetrics runView={runView} />
-        )
-      ) : (
+      {hasSteers ? (
         <>
           <RunMetrics runView={runView} />
-          {hasTimeline ? (
-            <RunTimeline
-              items={timelineItems}
-              onOpenTranscriptLink={onOpenTranscriptLink}
-            />
-          ) : hasPlanPreview || finalAnswer.trim() ? null : runView.status ===
-            "connecting" ? (
-            <PreparingRunStatus />
-          ) : (
-            <p className="stream-placeholder">
-              <Clock size={15} aria-hidden="true" />
-              Waiting for app-server output...
-            </p>
-          )}
+          {timelineSections.map((section, index) => (
+            <Fragment key={section.id}>
+              {section.items.length > 0 ? <RunTraceDropdown entry={entry} runView={runView} items={section.items}
+                label={`Activity ${index + 1}`} disclosureKey={section.id === firstActivitySection ? "trace" : section.id}
+                onLoadHistoricalActivity={section.id === firstActivitySection ? onLoadHistoricalActivity : undefined} onOpenTranscriptLink={onOpenTranscriptLink} /> : null}
+              {section.steer ? <SteerPrompt event={section.steer} onOpenTranscriptLink={onOpenTranscriptLink} /> : null}
+            </Fragment>
+          ))}
         </>
-      )}
-      <NativePlanCard
+      ) : hasTrace ? (
+        <RunTraceDropdown entry={entry} runView={runView} onLoadHistoricalActivity={onLoadHistoricalActivity}
+          onOpenTranscriptLink={onOpenTranscriptLink} />
+      ) : <RunMetrics runView={runView} />}
+      {!completed && !hasTimeline && !hasPlanPreview && !finalAnswer.trim() ? (
+        runView.status === "connecting" ? <PreparingRunStatus /> : <p className="stream-placeholder">Working…</p>
+      ) : null}
+      <AsyncQuestions entryClientId={entry.clientId} threadId={runView.threadId} runView={runView} />
+      {!runView.activities?.order.some(k => runView.activities?.byKey[k].itemType === "plan") ? <NativePlanCard
         entry={entry}
         onImplementPlan={onImplementPlan}
         onRevisePlan={onRevisePlan}
@@ -612,8 +581,8 @@ const AssistantRunOutput = memo(function AssistantRunOutput({
         onOpenTranscriptLink={onOpenTranscriptLink}
         expanded={planExpanded}
         onDisclosureChange={onPlanDisclosureChange}
-      />
-      <GeneratedImagePreviews runView={runView} />
+      /> : null}
+      {!runView.activities?.order.some(k => runView.activities?.byKey[k].itemType === "imageGeneration") ? <GeneratedImagePreviews runView={runView} /> : null}
       {showSummary ? (
         <RunSummary
           key="assistant-final-response"
@@ -943,12 +912,12 @@ const EditedFilesSummary = memo(function EditedFilesSummary({
         >
           {isExpanded ? (
             <>
-              Show fewer files <ChevronUp size={15} aria-hidden="true" />
+              Show fewer files <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
             </>
           ) : (
             <>
               Show {hiddenFileCount} more {hiddenFileCount === 1 ? "file" : "files"}{" "}
-              <ChevronDown size={15} aria-hidden="true" />
+              <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
             </>
           )}
         </button>
@@ -1053,6 +1022,7 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   runView,
   items,
   label,
+  disclosureKey,
   onLoadHistoricalActivity,
   onOpenTranscriptLink,
 }: {
@@ -1060,63 +1030,27 @@ const RunTraceDropdown = memo(function RunTraceDropdown({
   runView: RunViewState;
   items?: TimelineItem[];
   label?: string;
+  disclosureKey?: string;
   onLoadHistoricalActivity?: (entry: TaskChatEntry) => void;
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <details
-      className="stream-trace"
-      onToggle={(event) => {
-        const nextOpen = event.currentTarget.open;
-        setOpen(nextOpen);
-        if (
-          nextOpen &&
-          entry.historicalActivity?.status === "available"
-        ) {
-          onLoadHistoricalActivity?.(entry);
-        }
-      }}
-    >
-      <summary className="run-live-metrics" aria-label={label ?? "Run trace"}>
-        {label ? <span>{label}</span> : (
-          <>
-            <span>
-              <Clock size={15} aria-hidden="true" />
-              {formatDuration(runView.elapsedMs)}
-            </span>
-            <span>{formatTokenCount(runView)}</span>
-          </>
-        )}
-        <ChevronRight className="run-trace-chevron" size={15} aria-hidden="true" />
-      </summary>
-      {open ? (
-        <>
-          {entry.historicalActivity?.status === "loading" ? (
-            <p className="historical-activity-status">Loading activity...</p>
-          ) : null}
-          {entry.historicalActivity?.status === "error" ? (
-            <div className="historical-activity-status error">
-              <span>
-                {entry.historicalActivity.error ?? "Activity could not be loaded."}
-              </span>
-              <button
-                type="button"
-                onClick={() => onLoadHistoricalActivity?.(entry)}
-              >
-                Retry
-              </button>
-            </div>
-          ) : null}
-          <RunTimeline
-            items={items ?? buildTimelineItems(runView)}
-            onOpenTranscriptLink={onOpenTranscriptLink}
-          />
-        </>
-      ) : null}
-    </details>
-  );
+  const timeline = items ?? buildTimelineItems(runView);
+  const active = !["completed", "failed", "interrupted"].includes(runView.status);
+  const onExpand = useCallback(() => {
+    if (entry.historicalActivity?.status === "available") onLoadHistoricalActivity?.(entry);
+  }, [entry, onLoadHistoricalActivity]);
+  return <ActivityDisclosure active={active} disclosureKey={disclosureKey}
+    label={activityStatusLabel(runView.status, runView.elapsedMs)}
+    metrics={label ?? formatTokenCount(runView)} ariaLabel={label ?? "Run trace"} onExpand={onExpand}
+    attention={<RunTimeline items={attentionTimelineItems(timeline)} onOpenTranscriptLink={onOpenTranscriptLink} />}>
+    {entry.historicalActivity?.status === "loading" ? <p className="historical-activity-status">Loading activity...</p> : null}
+    {entry.historicalActivity?.status === "error" ? <div className="historical-activity-status error">
+      <span>{entry.historicalActivity.error ?? "Activity could not be loaded."}</span>
+      <button className="icon-button activity-icon-button" type="button" aria-label="Retry" data-tooltip="Retry" onClick={() => onLoadHistoricalActivity?.(entry)}><RotateCcw size={16} /></button>
+    </div> : null}
+    {entry.historicalActivity?.status === "loaded" && entry.historicalActivity.nextCursor && onLoadHistoricalActivity ? <button className="icon-button activity-icon-button" type="button" aria-label="Load older activity" data-tooltip="Load older activity" onClick={() => onLoadHistoricalActivity(entry)}><ChevronUp size={16} /></button> : null}
+    <RunTimeline items={timeline} active={active} onOpenTranscriptLink={onOpenTranscriptLink} />
+  </ActivityDisclosure>;
 });
 
 const RunMetrics = memo(function RunMetrics({
@@ -1128,57 +1062,12 @@ const RunMetrics = memo(function RunMetrics({
     <div className="run-live-metrics" aria-label="Run metrics">
       <span>
         <Clock size={15} aria-hidden="true" />
-        {formatDuration(runView.elapsedMs)}
+        {activityStatusLabel(runView.status, runView.elapsedMs)}
       </span>
       <span>{formatTokenCount(runView)}</span>
     </div>
   );
 });
-
-function usePreviewableMarkdownComponents(
-  onOpenTranscriptLink?: (href: string) => boolean,
-) {
-  return useMemo<Components>(
-    () => ({
-      a: ({ href, children, node: _node, ...props }) => {
-        const previewable = Boolean(
-          href && onOpenTranscriptLink && isPreviewableSummaryLink(href),
-        );
-        const external = Boolean(
-          href && normalizeExternalTranscriptUrl(href),
-        );
-        const className = [
-          props.className,
-          previewable ? "markdown-preview-link" : null,
-          external ? "markdown-external-link" : null,
-        ]
-          .filter(Boolean)
-          .join(" ");
-
-        return (
-          <a
-            {...props}
-            className={className || undefined}
-            href={href}
-            title={previewable ? "Click to preview file" : props.title}
-            onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
-              if (href && onOpenTranscriptLink?.(href)) {
-                event.preventDefault();
-                event.stopPropagation();
-              }
-            }}
-          >
-            {children}
-          </a>
-        );
-      },
-      img: ({ node: _node, ...props }) => (
-        <TranscriptMarkdownImage {...props} />
-      ),
-    }),
-    [onOpenTranscriptLink],
-  );
-}
 
 const RunSummary = memo(function RunSummary({
   runView,
@@ -1285,13 +1174,7 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
       aria-label="Run summary"
       aria-live={streaming ? "polite" : undefined}
     >
-      <ReactMarkdown
-        components={markdownComponents}
-        {...TRANSCRIPT_MARKDOWN_PLUGINS}
-        urlTransform={transcriptMarkdownUrlTransform}
-      >
-        {markdown}
-      </ReactMarkdown>
+      <StreamingMarkdown text={markdown} active={streaming} components={markdownComponents} />
     </div>
   );
 });
@@ -1299,9 +1182,9 @@ const AssistantMarkdownMessage = memo(function AssistantMarkdownMessage({
 function selectAssistantFinalAnswer(runView: RunViewState, completed: boolean) {
   if (completed) return runView.finalMessage;
 
-  const streamingMessages = Object.values(runView.agentMessagesById)
-    .filter((message) => message.phase === "final_answer" && message.text.trim())
-    .map((message) => message.text);
+  const streamingMessages = Object.entries(runView.agentMessagesById)
+    .filter(([id, message]) => message.delivery !== "async" && id !== runView.nativePlan.planItemId && message.phase === "final_answer" && message.text.trim())
+    .map(([, message]) => message.text);
   return streamingMessages.length > 0
     ? streamingMessages.join("\n\n")
     : runView.finalMessage;
@@ -1493,49 +1376,13 @@ function isFileNameBoundaryCharacter(value: string) {
   return /[A-Za-z0-9_.-]/.test(value);
 }
 
-const RunTimeline = memo(function RunTimeline({
-  items,
-  onOpenTranscriptLink,
-}: {
+const RunTimeline = memo(function RunTimeline({ items, onOpenTranscriptLink, active = false }: {
+  active?: boolean;
   items: TimelineItem[];
   onOpenTranscriptLink?: (href: string) => boolean;
 }) {
-  if (items.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="stream-event-list" aria-label="App-server stream">
-      {items.map((item) => {
-        if (item.kind === "steer") {
-          return <SteerPrompt key={item.event.id} event={item.event} onOpenTranscriptLink={onOpenTranscriptLink} />;
-        }
-        if (item.kind === "commands") {
-          return (
-            <RunActivityGroups key={item.id}>
-              <CommandsGroup commands={item.commands} />
-            </RunActivityGroups>
-          );
-        }
-
-        if (item.kind === "tools") {
-          return (
-            <RunActivityGroups key={item.id}>
-              <ToolActivitiesGroup activities={item.activities} />
-            </RunActivityGroups>
-          );
-        }
-
-        return (
-          <StreamEventRow
-            event={item.event}
-            key={item.event.id}
-            onOpenTranscriptLink={onOpenTranscriptLink}
-          />
-        );
-      })}
-    </div>
-  );
+  return <ActivityTimeline items={items} active={active} onOpenTranscriptLink={onOpenTranscriptLink}
+    renderSteer={(event) => <SteerPrompt event={event} onOpenTranscriptLink={onOpenTranscriptLink} />} />;
 });
 
 const SteerPrompt = memo(function SteerPrompt({
@@ -1558,245 +1405,12 @@ const SteerPrompt = memo(function SteerPrompt({
         aria-busy={pending}
         onCopy={(copyEvent) => writeSubmittedPromptClipboard(copyEvent, event.text, event.contextFiles)}
       >
-        <SubmittedPrompt prompt={event.text} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
+        <SubmittedPrompt prompt={readableAsyncReply(event.text)} contextFiles={event.contextFiles} onOpenTranscriptLink={onOpenTranscriptLink} />
       </article>
       {pending ? <span className="steer-delivery-status" role="status">Sending…</span> : null}
     </div>
   );
 });
-
-function RunActivityGroups({ children }: { children: ReactNode }) {
-  return (
-    <div className="run-activity-groups" aria-label="Run activity groups">
-      {children}
-    </div>
-  );
-}
-
-const CommandsGroup = memo(function CommandsGroup({
-  commands,
-}: {
-  commands: RunCommandActivity[];
-}) {
-  return (
-    <details className="run-activity-group command-runs">
-      <summary>
-        <span className="run-activity-title">
-          <Terminal size={15} aria-hidden="true" />
-          Ran {commands.length} {commands.length === 1 ? "command" : "commands"}
-        </span>
-        <ChevronDown size={15} aria-hidden="true" />
-      </summary>
-      <div className="run-activity-items">
-        {commands.map((command) => (
-          <div className="run-activity-item command-row" key={command.id}>
-            <span>{commandActionLabel(command.status)}</span>
-            <span className="activity-command-text">{command.command}</span>
-            {command.durationMs !== null ? (
-              <span>for {formatDuration(command.durationMs)}</span>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-});
-
-const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
-  activities,
-}: {
-  activities: RunToolActivity[];
-}) {
-  const active = activities.filter(
-    (activity) => activity.status === "pending" || activity.status === "running",
-  );
-  const failed = activities.filter(
-    (activity) =>
-      activity.status === "failed" ||
-      activity.status === "declined" ||
-      activity.status === "interrupted",
-  );
-  const completed = activities.filter((activity) => activity.status === "completed");
-  const recovered = activities.filter((activity) => activity.status === "recovered");
-  const resolved = activities.filter(
-    (activity) =>
-      activity.status === "completed" || activity.status === "recovered",
-  );
-
-  return (
-    <div className="tool-activity-groups" aria-live="polite">
-      {active.map((activity) => (
-        <ToolActivityRow activity={activity} key={activity.id} />
-      ))}
-      {failed.map((activity) => (
-        <ToolActivityRow activity={activity} key={activity.id} />
-      ))}
-      {resolved.length > 0 ? (
-        <details className="run-activity-group tool-runs">
-          <summary>
-            <span className="run-activity-title">
-              {toolCategoryIcon(summaryToolCategory(completed), 15)}
-              {completedToolSummary(completed, recovered.length)}
-            </span>
-            <ChevronDown size={15} aria-hidden="true" />
-          </summary>
-          <div className="run-activity-items">
-            {resolved.map((activity) => (
-              <ToolActivityRow activity={activity} key={activity.id} />
-            ))}
-          </div>
-        </details>
-      ) : null}
-    </div>
-  );
-});
-
-const ToolActivityRow = memo(function ToolActivityRow({
-  activity,
-}: {
-  activity: RunToolActivity;
-}) {
-  return (
-    <div
-      className={`run-activity-item tool-activity-row is-${activity.status}`}
-      aria-label={`${activity.label}, ${toolActivityStatusLabel(activity.status)}`}
-    >
-      <span className="tool-activity-icon" aria-hidden="true">
-        {toolCategoryIcon(activity.category, 15)}
-      </span>
-      <span className="tool-activity-label" title={activity.label}>
-        {activity.label}
-      </span>
-      {activity.durationMs !== null ? (
-        <span className="tool-activity-duration">
-          {formatDuration(activity.durationMs)}
-        </span>
-      ) : null}
-      {activity.safeDetails.length > 0 ? (
-        <span className="tool-activity-details">
-          {activity.safeDetails.map((detail) => (
-            <span key={`${detail.label}:${detail.value}`}>
-              <span className="sr-only">{detail.label}: </span>
-              {detail.value}
-            </span>
-          ))}
-        </span>
-      ) : null}
-    </div>
-  );
-});
-
-function toolCategoryIcon(category: RunToolActivity["category"], size: number) {
-  switch (category) {
-    case "browser":
-      return <Globe2 size={size} aria-hidden="true" />;
-    case "github":
-      return <GitPullRequest size={size} aria-hidden="true" />;
-    case "search":
-      return <Search size={size} aria-hidden="true" />;
-    case "collaboration":
-      return <Users size={size} aria-hidden="true" />;
-    default:
-      return <Wrench size={size} aria-hidden="true" />;
-  }
-}
-
-function summaryToolCategory(activities: RunToolActivity[]) {
-  const category = activities[0]?.category ?? "integration";
-  return activities.every((activity) => activity.category === category)
-    ? category
-    : "integration";
-}
-
-function completedToolSummary(
-  activities: RunToolActivity[],
-  recoveredCount = 0,
-) {
-  if (activities.length === 0) {
-    return `${recoveredCount} ${
-      recoveredCount === 1 ? "retry" : "retries"
-    } recovered`;
-  }
-  const category = summaryToolCategory(activities);
-  const categoryLabel =
-    category === "integration"
-      ? ""
-      : category === "collaboration"
-        ? " collaboration"
-        : ` ${category}`;
-  const completedSummary = `Used ${activities.length}${categoryLabel} ${
-    activities.length === 1 ? "tool" : "tools"
-  }`;
-  return recoveredCount > 0
-    ? `${completedSummary} · ${recoveredCount} ${
-        recoveredCount === 1 ? "retry" : "retries"
-      } recovered`
-    : completedSummary;
-}
-
-function toolActivityStatusLabel(status: RunToolActivity["status"]) {
-  switch (status) {
-    case "pending":
-      return "Pending";
-    case "running":
-      return "Running";
-    case "completed":
-      return "Completed";
-    case "recovered":
-      return "Recovered after retry";
-    case "declined":
-      return "Declined";
-    case "interrupted":
-      return "Interrupted";
-    default:
-      return "Failed";
-  }
-}
-
-const StreamEventRow = memo(function StreamEventRow({
-  event,
-  onOpenTranscriptLink,
-}: {
-  event: StreamActivityEvent;
-  onOpenTranscriptLink?: (href: string) => boolean;
-}) {
-  const markdownComponents = usePreviewableMarkdownComponents(onOpenTranscriptLink);
-  if (event.kind === "message") {
-    return (
-      <div className="stream-message" key={event.id}>
-        <ReactMarkdown
-          components={markdownComponents}
-          {...TRANSCRIPT_MARKDOWN_PLUGINS}
-          urlTransform={transcriptMarkdownUrlTransform}
-        >
-          {normalizePreviewableMarkdownLinks(event.text)}
-        </ReactMarkdown>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`stream-event ${event.kind}`} key={event.id}>
-      {streamEventIcon(event.kind)}
-      <span>{event.text}</span>
-    </div>
-  );
-});
-
-function streamEventIcon(kind: StreamActivityEvent["kind"]) {
-  switch (kind) {
-    case "command":
-      return <Terminal size={15} aria-hidden="true" />;
-    case "file":
-      return <FileText size={15} aria-hidden="true" />;
-    case "reasoning":
-      return <BrainCircuit size={15} aria-hidden="true" />;
-    case "message":
-      return <MessageSquare size={15} aria-hidden="true" />;
-    default:
-      return <Activity size={15} aria-hidden="true" />;
-  }
-}
 
 const NativePlanMarkdown = memo(function NativePlanMarkdown({
   text,
@@ -1968,11 +1582,7 @@ const NativePlanCard = memo(function NativePlanCard({
             });
           }}
         >
-          {isExpanded ? (
-            <ChevronUp size={15} aria-hidden="true" />
-          ) : (
-            <ChevronDown size={15} aria-hidden="true" />
-          )}
+          <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
           {isExpanded ? "Hide full plan" : "Show full plan"}
         </button>
       ) : null}
@@ -2171,55 +1781,6 @@ function buildUserInputResponse(
     unansweredQuestionIds,
   };
 }
-
-const PendingInteractionNavigator = memo(function PendingInteractionNavigator({
-  index,
-  total,
-  onPrevious,
-  onNext,
-}: {
-  index: number;
-  total: number;
-  onPrevious: () => void;
-  onNext: () => void;
-}) {
-  if (total <= 1) return null;
-  return (
-    <nav
-      className="pending-interaction-navigator"
-      aria-label="Pending interactions"
-    >
-      <button
-        type="button"
-        className="pending-interaction-nav"
-        aria-label="Previous pending interaction"
-        data-tooltip="Previous"
-        disabled={index === 0}
-        onClick={onPrevious}
-      >
-        <ChevronLeft size={15} aria-hidden="true" />
-      </button>
-      <span
-        className="pending-interaction-count"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        {index + 1} of {total}
-      </span>
-      <button
-        type="button"
-        className="pending-interaction-nav"
-        aria-label="Next pending interaction"
-        data-tooltip="Next"
-        disabled={index === total - 1}
-        onClick={onNext}
-      >
-        <ChevronRight size={15} aria-hidden="true" />
-      </button>
-    </nav>
-  );
-});
 
 const UserInputQuestionCard = memo(function UserInputQuestionCard({
   entry,
@@ -2857,58 +2418,4 @@ function approvalRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}hr ${minutes}m ${seconds}s`;
-  }
-
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-
-  return `${seconds}s`;
-}
-
-function formatTokenCount(runView: RunViewState) {
-  if (
-    runView.tokenUsage?.turnTokens !== null &&
-    runView.tokenUsage?.turnTokens !== undefined
-  ) {
-    return `${runView.tokenUsage.turnTokens.toLocaleString()} tokens`;
-  }
-  if (
-    runView.tokenUsage === null &&
-    (runView.status === "idle" ||
-      runView.status === "connecting" ||
-      runView.status === "running")
-  ) {
-    return "0 tokens";
-  }
-  return "Token usage unavailable";
-}
-
-function commandActionLabel(status: RunCommandActivity["status"]) {
-  if (status === "failed") {
-    return "Failed";
-  }
-  if (status === "declined") {
-    return "Skipped";
-  }
-  if (status === "running") {
-    return "Running";
-  }
-  if (status === "awaiting-approval") {
-    return "Awaiting approval";
-  }
-  if (status === "pending") {
-    return "Preparing";
-  }
-  return "Ran";
 }

@@ -1,0 +1,1123 @@
+{
+  "baselineEngine": "0.153.4",
+  "referenceApp": "26.908.70816",
+  "verified": "2026-09-17",
+  "source": "https://learn.chatgpt.com/docs/app-server",
+  "items": [
+    {
+      "item": "userMessage",
+      "disposition": "rendered",
+      "renderer": "SubmittedPrompt / SteerPrompt",
+      "lifecycle": "Root prompt or chronological steering; asynchronous replies resolve the existing question",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamAlignment.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/components/TaskChatTurn.test.tsx",
+        "src/components/SubagentInspector.test.tsx"
+      ]
+    },
+    {
+      "item": "hookPrompt",
+      "disposition": "supporting",
+      "renderer": "StreamActivities supporting hook details",
+      "lifecycle": "Supporting instructions; never a submitted user message",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "agentMessage",
+      "disposition": "rendered",
+      "renderer": "StreamingMarkdown / RunSummary / AsyncQuestions",
+      "lifecycle": "Indexed live text, authoritative completion, dedicated async question UI",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamAlignment.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/components/TaskChatTurn.test.tsx",
+        "src/components/SubagentInspector.test.tsx"
+      ]
+    },
+    {
+      "item": "functionCallOutput",
+      "disposition": "rendered",
+      "renderer": "ActivityResult",
+      "lifecycle": "Standalone chronological text/content result",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx",
+        "src/components/ActivityResult.test.tsx"
+      ]
+    },
+    {
+      "item": "plan",
+      "disposition": "rendered",
+      "renderer": "NativePlanCard / ActivityResult in subagents",
+      "lifecycle": "Chronological plan anchor, existing implement/revise/cancel actions",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamAlignment.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/components/TaskChatTurn.test.tsx",
+        "src/components/SubagentInspector.test.tsx"
+      ]
+    },
+    {
+      "item": "reasoning",
+      "disposition": "rendered",
+      "renderer": "StreamEventRow",
+      "lifecycle": "Indexed summaries; raw content stays distinct and is not exposed by lazy detail reads",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamAlignment.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/components/TaskChatTurn.test.tsx",
+        "src/components/SubagentInspector.test.tsx"
+      ]
+    },
+    {
+      "item": "commandExecution",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / command disclosure",
+      "lifecycle": "Metadata exploration classification; original command, cwd, output, exit code, interactions",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "fileChange",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / DiffPreview",
+      "lifecycle": "Per-item add/update/delete/rename patches and lifecycle; lazy virtualized diff",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "mcpToolCall",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / ActivityResult / McpAppWidget",
+      "lifecycle": "Tool identity/progress, rich content, optional sandboxed MCP App",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx",
+        "src/components/McpAppWidget.test.tsx",
+        "src/components/StreamHost.test.tsx",
+        "src-tauri/src/widget_sandbox.rs",
+        "src/components/ActivityResult.test.tsx"
+      ]
+    },
+    {
+      "item": "dynamicToolCall",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / ActivityResult",
+      "lifecycle": "Tool identity, supplied dynamic content, success/error state",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx",
+        "src/components/ActivityResult.test.tsx"
+      ]
+    },
+    {
+      "item": "collabAgentToolCall",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / existing subagent inspector",
+      "lifecycle": "Named coordination action and originating child task",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "subAgentActivity",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / existing subagent inspector",
+      "lifecycle": "Named activity and child task link",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "webSearch",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / ActivityResult",
+      "lifecycle": "Search/open/find action and supplied source links; absent sources are not invented",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "imageView",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / ActivityImage",
+      "lifecycle": "Chronological image preview and open action",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "sleep",
+      "disposition": "rendered",
+      "renderer": "StreamActivities status row",
+      "lifecycle": "Explicit waiting duration and interruption",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "imageGeneration",
+      "disposition": "rendered",
+      "renderer": "StreamActivities / GeneratedImagePreview",
+      "lifecycle": "Chronological generation state; existing local/result fallback preview",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "enteredReviewMode",
+      "disposition": "rendered",
+      "renderer": "StreamActivities status row",
+      "lifecycle": "Explicit entered-review transition and review detail",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "exitedReviewMode",
+      "disposition": "rendered",
+      "renderer": "StreamActivities status row",
+      "lifecycle": "Explicit completed-review transition and review detail",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    },
+    {
+      "item": "contextCompaction",
+      "disposition": "rendered",
+      "renderer": "StreamActivities plain status row (no disclosure)",
+      "lifecycle": "Active/completed label and inline failure details; retained outside collapsed trace; legacy notification deduplicates against item",
+      "history": "Ordered item projection and persisted-event replay; lazy details when retained; redacted/missing bodies remain unavailable",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/components/StreamActivities.test.tsx"
+      ]
+    }
+  ],
+  "notifications": [
+    {
+      "notification": "error",
+      "disposition": "supporting",
+      "consumer": "Run error and unfinished activity failure",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "thread/started",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/status/changed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing thread active/attention state",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/archived",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/deleted",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/unarchived",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/closed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/reverted",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "skills/changed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/name/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/goal/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/goal/cleared",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/queue/changed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "project/changed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/project/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/environment/connected",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/environment/disconnected",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/settings/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/tokenUsage/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing per-run and account token metrics",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "turn/started",
+      "disposition": "supporting",
+      "consumer": "Run lifecycle and turn identity",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "hook/started",
+      "disposition": "rendered",
+      "consumer": "Named hook running status",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "turn/completed",
+      "disposition": "supporting",
+      "consumer": "Run lifecycle; unfinished items interrupted/failed",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "hook/completed",
+      "disposition": "rendered",
+      "consumer": "Named hook result; blocked/failed stays visible",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "turn/diff/updated",
+      "disposition": "supporting",
+      "consumer": "Final aggregate edited-files summary, review links and undo",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "turn/plan/updated",
+      "disposition": "supporting",
+      "consumer": "Chronological plan-progress block and existing composer indicator",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/started",
+      "disposition": "supporting",
+      "consumer": "Reserve chronological position; update owning typed item",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/autoApprovalReview/started",
+      "disposition": "rendered",
+      "consumer": "Named automatic review",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/autoApprovalReview/completed",
+      "disposition": "rendered",
+      "consumer": "Review decision and rationale",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "autoApprovalReview/strictReviewRequired",
+      "disposition": "rendered",
+      "consumer": "Strict review status",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/completed",
+      "disposition": "supporting",
+      "consumer": "Authoritative completion without duplicate rows",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "rawResponseItem/completed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Raw protocol diagnostic; normalized ThreadItem is the transcript authority",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "rawResponse/completed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Raw protocol diagnostic; normalized items are the transcript authority",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "item/agentMessage/delta",
+      "disposition": "supporting",
+      "consumer": "Indexed assistant text stream",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/plan/delta",
+      "disposition": "supporting",
+      "consumer": "Plan preview at original activity anchor",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "command/exec/outputDelta",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Host-initiated command endpoint output; distinct from model commandExecution items",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "process/outputDelta",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing process/terminal consumer",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "process/exited",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing process/terminal lifecycle",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "item/commandExecution/outputDelta",
+      "disposition": "supporting",
+      "consumer": "Owning command output",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/commandExecution/terminalInteraction",
+      "disposition": "supporting",
+      "consumer": "Owning command interaction detail",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/fileChange/outputDelta",
+      "disposition": "supporting",
+      "consumer": "Owning edit execution log when supplied live",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/fileChange/patchUpdated",
+      "disposition": "supporting",
+      "consumer": "Replace owning edit revision",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "serverRequest/resolved",
+      "disposition": "supporting",
+      "consumer": "Existing approvals/questions lifecycle; no duplicate message",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/mcpToolCall/progress",
+      "disposition": "supporting",
+      "consumer": "Owning tool progress",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "mcpServer/oauthLogin/completed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "mcpServer/startupStatus/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "mcpServer/event/stream/notification",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Server subscription notification; not a model tool execution",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "account/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "account/rateLimits/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "app/list/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "remoteControl/status/changed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "externalAgentConfig/import/progress",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "externalAgentConfig/import/completed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "fs/changed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Workspace/file refresh; never infer an agent edit from a watcher",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "item/reasoning/summaryTextDelta",
+      "disposition": "supporting",
+      "consumer": "Indexed reasoning summary",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/reasoning/summaryPartAdded",
+      "disposition": "supporting",
+      "consumer": "Reserve reasoning summary part",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "item/reasoning/textDelta",
+      "disposition": "supporting",
+      "consumer": "Separate indexed reasoning content",
+      "lifecycle": "Owning item/run",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "thread/compacted",
+      "disposition": "rendered",
+      "consumer": "Explicit compaction fallback",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "model/rerouted",
+      "disposition": "rendered",
+      "consumer": "Model transition and reason",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "model/verification",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Model configuration/verification metadata",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "modelProvider/authRecoveryStarted",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "modelProvider/authRecoveryCompleted",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "turn/moderationMetadata",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Internal moderation metadata; no raw transcript envelope",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "model/safetyBuffering/updated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Model buffering state",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "warning",
+      "disposition": "rendered",
+      "consumer": "Warning details",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "guardianWarning",
+      "disposition": "rendered",
+      "consumer": "Guardian warning details",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "deprecationNotice",
+      "disposition": "rendered",
+      "consumer": "Deprecation summary/details",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "configWarning",
+      "disposition": "rendered",
+      "consumer": "Configuration summary/details",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "fuzzyFileSearch/sessionUpdated",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "fuzzyFileSearch/sessionCompleted",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/started",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/itemAdded",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/item/started",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/item/transcript/delta",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/item/completed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/transcript/delta",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/transcript/done",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/outputAudio/delta",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/sdp",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/error",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "thread/realtime/closed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Realtime transport (voice outside alignment scope)",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "windows/worldWritableWarning",
+      "disposition": "rendered",
+      "consumer": "Platform warning",
+      "lifecycle": "Independent status row",
+      "history": "Persisted event replay when recorded; item pages only contain item-backed state",
+      "tests": [
+        "src/lib/streamActivity.test.ts",
+        "src/lib/codexEventReducer.test.ts",
+        "src/features/conversations/historyProjection.test.ts"
+      ]
+    },
+    {
+      "notification": "windowsSandbox/setupCompleted",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    },
+    {
+      "notification": "account/login/completed",
+      "disposition": "application-level bookkeeping",
+      "consumer": "Existing application settings, account, project, queue, connection, or lifecycle consumer; no execution row",
+      "lifecycle": "Application state",
+      "history": "Not reconstructed as execution activity",
+      "tests": [
+        "existing application/runtime suites"
+      ]
+    }
+  ]
+}

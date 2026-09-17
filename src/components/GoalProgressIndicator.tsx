@@ -1,3 +1,4 @@
+import { useDocumentVisible } from "../shared/documentVisibility";
 import {
   CircleAlert,
   CircleCheck,
@@ -43,15 +44,17 @@ export const GoalProgressIndicator = memo(function GoalProgressIndicator({
   onEdit,
   onStop,
 }: Props) {
+  const documentVisible = useDocumentVisible();
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
+    if (!documentVisible) return;
     setNowMs(Date.now());
     if (progress.status !== "active") return;
 
     const intervalId = window.setInterval(() => setNowMs(Date.now()), 1_000);
     return () => window.clearInterval(intervalId);
-  }, [progress.observedAtMs, progress.status]);
+  }, [documentVisible, progress.observedAtMs, progress.status]);
 
   const pending = progress.actionPending !== null;
   const statusLabel =

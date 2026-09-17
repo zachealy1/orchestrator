@@ -1,6 +1,6 @@
 import { commands } from "../../generated/tauri";
 import type { WorkspaceGitDiff } from "../workspaces/types";
-import type { KanbanPullRequestRecord } from "../github/api";
+import type { KanbanPullRequestRecord } from "../reviews/api";
 
 export type KanbanColumnKey = "todo" | "in_progress" | "in_review" | "done";
 export type KanbanExecutionStateValue =
@@ -44,7 +44,7 @@ export type KanbanCardRecord = {
   sortPosition: number;
   executionState: KanbanExecutionStateValue;
   reviewState: KanbanReviewStateValue;
-  reviewChannel?: "github" | "local" | null;
+  reviewChannel?: "github" | "gitlab" | "mixed" | "local" | null;
   currentAttemptId: string | null;
   stateVersion: number;
   archivedAt: string | null;
@@ -80,6 +80,9 @@ export type KanbanLocalReview = {
   summary: string | null;
   reviewChannel: string;
   canPublishGithub: boolean;
+  canPublishRemote?: boolean;
+  publicationDestination?: string | null;
+  publicationBlocker?: string | null;
   repositories: KanbanLocalReviewRepository[];
 };
 

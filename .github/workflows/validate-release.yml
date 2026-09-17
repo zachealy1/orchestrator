@@ -60,6 +60,7 @@ jobs:
           cargo audit --file src-tauri/Cargo.lock --deny warnings
       - run: npm run prepare:native-runtimes
       - run: npm run test:github-cli-runtime
+      - run: npm run test:gitlab-cli-runtime
       - name: Compare version-specific consumed protocol
         env:
           TRUSTED_BASE: ${{ inputs.base }}

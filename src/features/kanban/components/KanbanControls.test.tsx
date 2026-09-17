@@ -95,7 +95,7 @@ describe("Kanban controls", () => {
     expect(onGroupByChange).toHaveBeenCalledWith("repository");
 
     const refreshButton = screen.getByRole("button", {
-      name: "Refresh pull request status",
+      name: "Refresh review request status",
     });
     expect(refreshButton).not.toHaveTextContent("Refresh");
     await user.click(refreshButton);
@@ -369,7 +369,7 @@ describe("Kanban controls", () => {
     );
 
     const dialog = screen.getByRole("alertdialog", {
-      name: "Complete without a pull request?",
+      name: "Complete without a review request?",
     });
     expect(dialog).toHaveClass("is-no-changes");
     expect(dialog.querySelector(".eyebrow")).not.toBeInTheDocument();

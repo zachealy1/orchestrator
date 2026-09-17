@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { useState, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { addSteerPrompt, emptyRunView, settleSteerPrompt } from "../lib/codexEventReducer";
+import { addSteerPrompt, applyCodexMessage, emptyRunView, settleSteerPrompt } from "../lib/codexEventReducer";
 import { ORCHESTRATOR_PROMPT_CONTEXT_MIME } from "../features/composer/types";
 import {
   TaskChatTurn,
@@ -112,6 +112,17 @@ function historyEntry(turnIndex: number): TaskChatEntry {
 }
 
 describe("TaskChatTurn", () => {
+  it("loads older history from the first nonempty activity section after steering", async () => {
+    const onLoadHistoricalActivity = vi.fn();
+    const steered = settleSteerPrompt(addSteerPrompt(emptyRunView, { id: "steer", text: "Continue here", timestamp: "", contextFiles: [] }), "steer", true);
+    const entry: TaskChatEntry = { ...historyEntry(1), historicalActivity: { source: "persisted-run", runId: 2, status: "loaded", nextCursor: "older", error: null },
+      runView: { ...steered, status: "completed", streamEvents: [...steered.streamEvents, { id: "after", kind: "message", text: "After the steer", timestamp: "" }] } };
+    render(<TestTaskChatTurn entry={entry} editable={false} editing={false} editingPrompt="" onEditingPromptChange={vi.fn()} onSubmitEdit={vi.fn()} onCancelEdit={vi.fn()} onStartEdit={vi.fn()} onResolveRequest={vi.fn()} onLoadHistoricalActivity={onLoadHistoricalActivity} />);
+    fireEvent.click(screen.getByLabelText("Activity 2"));
+    const load = await screen.findByRole("button", { name: "Load older activity" });
+    fireEvent.click(load);
+    expect(onLoadHistoricalActivity).toHaveBeenCalledExactlyOnceWith(entry);
+  });
   it("keeps a pending steer between streamed output and retains it between completed activity sections", async () => {
     let runView = addSteerPrompt({
       ...emptyRunView,
@@ -895,7 +906,7 @@ it("renders submitted prompts and live output with real-time metrics", () => {
     const submittedPrompt = screen.getByLabelText("Submitted prompt");
     expect(submittedPrompt).toHaveTextContent("Objective:");
     expect(submittedPrompt).toHaveTextContent("Fix the failing auth tests");
-    expect(within(liveOutput).getByText("1m 5s")).toBeInTheDocument();
+    expect(within(liveOutput).getByText("Working for 1m 5s")).toBeInTheDocument();
     expect(within(liveOutput).getByText("734 tokens")).toBeInTheDocument();
     expect(within(liveOutput).getByText("I am updating the auth flow.")).toBeInTheDocument();
     expect(within(liveOutput).getByText("Ran npm test")).toBeInTheDocument();
@@ -1281,7 +1292,7 @@ it("renders completed summaries as markdown and collapses the stream trace", asy
     expect(traceTrigger.querySelector(".run-trace-chevron")).toHaveClass(
       "lucide-chevron-right",
     );
-    expect(within(traceTrigger).getByText("1hr 52m 6s")).toBeInTheDocument();
+    expect(within(traceTrigger).getByText("Worked for 1hr 52m 6s")).toBeInTheDocument();
     expect(within(traceTrigger).getByText("69,839 tokens")).toBeInTheDocument();
     expect(
       screen.queryByText("1hr 52m 6s • 69,839 tokens"),
@@ -1299,6 +1310,32 @@ it("renders completed summaries as markdown and collapses the stream trace", asy
       ),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Load older activity")).not.toBeInTheDocument();
+  });
+
+it("updates turn tokens once through steering, completion, and restored history", () => {
+    let runView = { ...emptyRunView, status: "running" as const };
+    const entry = historyEntry(1);
+    const body = () => <TaskChatTranscript entries={[{ ...entry, status: runView.status, runView }]} onResolveRequest={vi.fn()} />;
+    const view = render(body());
+    expect(screen.getAllByText("Token usage pending")).toHaveLength(1);
+    const report = (totalTokens: number) => ({ method: "thread/tokenUsage/updated", params: { tokenUsage: { total: { totalTokens }, last: { totalTokens } } } });
+    let updated = applyCodexMessage(runView, report(2400));
+    updated = applyCodexMessage(updated, { method: "item/completed", params: { item: { id: "read", type: "commandExecution", command: "cat file", status: "completed" } } });
+    updated = settleSteerPrompt(addSteerPrompt(updated, { id: "steer", text: "Check the result", contextFiles: [], timestamp: "" }), "steer", true);
+    updated = applyCodexMessage(updated, { method: "item/completed", params: { item: { id: "check", type: "commandExecution", command: "npm test", status: "completed" } } });
+    runView = { ...updated, status: "running" };
+    view.rerender(body());
+    expect(screen.getAllByText("2,400 tokens")).toHaveLength(1);
+    runView = { ...applyCodexMessage(runView, report(3200)), status: "running" };
+    view.rerender(body());
+    expect(screen.getAllByText("3,200 tokens")).toHaveLength(1);
+    expect(screen.queryByText("2,400 tokens")).toBeNull();
+    const completed = { ...entry, status: "completed" as const, runView: { ...runView, status: "completed" as const } };
+    const restoredBody = <TaskChatTranscript entries={[completed]} onResolveRequest={vi.fn()} />;
+    view.rerender(restoredBody);
+    expect(screen.getAllByText("3,200 tokens")).toHaveLength(1);
+    view.unmount(); render(restoredBody);
+    expect(screen.getAllByText("3,200 tokens")).toHaveLength(1);
   });
 
 it("does not label cumulative thread usage as a completed turn total", () => {

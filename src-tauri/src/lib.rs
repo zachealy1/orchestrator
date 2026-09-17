@@ -24,6 +24,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{sync::oneshot, time::timeout};
 
 mod agent_notifications;
+mod analytics;
 mod app_updates;
 mod update_gate;
 mod release_backup;
@@ -37,6 +38,9 @@ mod goal_context;
 mod git;
 mod github;
 mod github_cli;
+mod gitlab_cli;
+mod review_provider;
+mod reviews;
 mod interaction;
 mod kanban_git;
 mod kanban_store;
@@ -48,6 +52,8 @@ mod paths;
 mod preflight;
 mod process;
 mod web_preview;
+mod stream_projection;
+mod widget_sandbox;
 mod workspace;
 
 use agent_notifications::AgentNotificationState;
@@ -69,6 +75,9 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
         .dangerously_cast_bigints_to_number()
         .error_handling(tauri_specta::ErrorHandlingMode::Throw)
         .commands(tauri_specta::collect_commands![
+            analytics::analytics_record_activity,
+            analytics::analytics_get_preferences,
+            analytics::analytics_set_enabled,
             codex_engine::codex_engine_status,
             app_updates::app_update_state,
             app_updates::app_update_check,
@@ -82,6 +91,10 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             codex_projected_subagent_thread_read,
             codex_default_profile_turn_activity,
             codex_persisted_run_activity,
+            stream_projection::codex_activity_item_read,
+            widget_sandbox::widget_sandbox_create,
+            widget_sandbox::widget_sandbox_close,
+            widget_sandbox::save_activity_resource,
             codex_default_profile_thread_transcript_sync,
             codex_default_profile_thread_transcript_cancel,
             codex_resolve_server_request,
@@ -143,6 +156,14 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             kanban_store::kanban_complete_local_review_without_changes,
             kanban_store::kanban_set_inherited_context,
             kanban_store::kanban_get_inherited_context,
+            gitlab_cli::gitlab_connections,
+            gitlab_cli::gitlab_connect,
+            gitlab_cli::gitlab_cancel_connection,
+            gitlab_cli::gitlab_disconnect,
+            review_provider::review_connection_requirements,
+            reviews::review_publish_kanban_card,
+            reviews::review_sync_kanban_requests,
+            reviews::review_complete_kanban_without_request,
             github_cli::github_connection_status,
             github_cli::github_connect,
             github_cli::github_continue_connection,
@@ -195,6 +216,8 @@ pub fn run() {
 
     let command_builder = command_builder();
     let app = tauri::Builder::default()
+        .manage(widget_sandbox::WidgetSandboxState::default())
+        .register_uri_scheme_protocol("orchestrator-widget", |context, request| widget_sandbox::response(context.app_handle(), &request))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             present_main_window(app);
         }))
@@ -203,6 +226,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AgentNotificationState::default())
         .manage(github_cli::GithubState::default())
+        .manage(gitlab_cli::GitlabState::default())
+        .manage(reviews::ReviewState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -221,6 +246,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             let database = tauri::async_runtime::block_on(DatabaseState::connect(app.handle()))
                 .map_err(std::io::Error::other)?;
+            analytics::initialize(app.handle(), database.clone());
             app.manage(database);
             Ok(())
         })

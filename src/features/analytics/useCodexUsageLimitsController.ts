@@ -10,6 +10,9 @@ import {
   type CodexUsageLimitsLoadResult,
 } from "./usageLimits";
 
+import { useStableEvent } from "../../shared/reactRuntime";
+import { useCodexUsageResetController } from "./useCodexUsageResetController";
+
 const REFRESH_INTERVAL_MS = 60_000;
 const NOTIFICATION_REFRESH_DELAY_MS = 250;
 
@@ -199,7 +202,7 @@ export function useCodexUsageLimitsController({
             response,
             account?.planType ?? null,
           ),
-          refreshing: false,
+          refreshing: true,
           stale: false,
           error: null,
         },
@@ -223,13 +226,23 @@ export function useCodexUsageLimitsController({
     if (selectedAccountId !== null) void refreshAccount(selectedAccountId);
   }, [refreshAccount, selectedAccountId]);
 
+  const state = (selectedAccountId === null ? null : states[selectedAccountId]) ?? EMPTY_USAGE_LIMITS_STATE;
+  const getAccountState = useStableEvent((accountId: number) => statesRef.current[accountId] ?? EMPTY_USAGE_LIMITS_STATE);
+  const reset = useCodexUsageResetController({ accounts, selectedAccount, getAccountState, refreshAccount });
+  const settingsModel = useMemo(() => ({
+    accounts, selectedAccountId, state, reset: reset.state,
+  }), [accounts, selectedAccountId, state, reset.state]);
+  const settingsActions = useMemo(() => ({
+    selectAccount, retry, ...reset.actions,
+  }), [selectAccount, retry, reset.actions]);
+
   return {
     accounts,
     selectedAccountId,
     selectedAccount,
-    state:
-      (selectedAccountId === null ? null : states[selectedAccountId]) ??
-      EMPTY_USAGE_LIMITS_STATE,
+    state,
+    settingsModel,
+    settingsActions,
     selectAccount,
     retry,
     refreshAccount,

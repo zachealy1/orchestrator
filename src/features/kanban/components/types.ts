@@ -87,8 +87,8 @@ export type KanbanCard = {
   hasUnreadActivity?: boolean;
   archivedAt?: string | null;
   lastActivityAt?: string | null;
-  pullRequests?: import("../../github/api").KanbanPullRequestRecord[];
-  reviewChannel?: "github" | "local" | null;
+  pullRequests?: import("../../reviews/api").KanbanPullRequestRecord[];
+  reviewChannel?: "github" | "gitlab" | "mixed" | "local" | null;
 };
 
 export type KanbanColumn = {

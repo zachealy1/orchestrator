@@ -1,3 +1,6 @@
+import { SettingsDetailHeader, SettingsIconAction } from "./SettingsPanel";
+import { GitlabSettingsPanel, GitlabConnectionSummary } from "../gitlab/GitlabSettingsPanel";
+import { InstallationActivitySettings } from "../installationActivity/InstallationActivityProvider";
 import {
   Bell,
   Check,
@@ -27,8 +30,6 @@ import {
   useId,
   useRef,
   useState,
-  type ReactNode,
-  type Ref,
 } from "react";
 import { createPortal } from "react-dom";
 import { version as appVersion } from "../../../package.json";
@@ -66,6 +67,8 @@ import {
   githubStatusDetails,
   notificationStatusDetails,
 } from "./settingsStatusDetails";
+
+import { SettingsAccountUsage, type SettingsAccountUsageActions, type SettingsAccountUsageModel } from "./SettingsAccountUsage";
 
 type ComputerUsePermissionState = "verified" | "denied" | "unverified";
 
@@ -119,6 +122,7 @@ function computerUseDetailStatus(
 }
 
 export type SettingsViewModel = {
+  usage: SettingsAccountUsageModel;
   dragRegion?: string;
   computerUseEnabled: boolean;
   browserPreferences: BrowserPreferences;
@@ -145,6 +149,7 @@ export type SettingsViewModel = {
 };
 
 export type SettingsViewActions = {
+  usage: SettingsAccountUsageActions;
   setComputerUseEnabled: (enabled: boolean) => void;
   setBrowserAskWhereToSave: (enabled: boolean) => void;
   chooseBrowserDownloadLocation: () => void;
@@ -653,6 +658,8 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
+      {matchesSettings("connections", "gitlab", "merge requests", "self-managed") ? <GitlabSettingsPanel /> : null}
+
       {matchesSettings("accounts", "codex", "codex connection") ? (
         <section
           className="surface settings-panel codex-settings-panel"
@@ -862,6 +869,12 @@ export const SettingsView = memo(function SettingsView({
         </section>
       ) : null}
 
+      {matchesSettings("privacy", "activity", "posthog", "share installation activity") ? <InstallationActivitySettings /> : null}
+
+      {matchesSettings("account usage", "accounts", "codex", "usage limits", "earned resets", "credits") ? (
+        <SettingsAccountUsage model={model.usage} actions={actions.usage} active={active} />
+      ) : null}
+
       {matchesSettings("about", "orchestrator", "app version", appVersion.toLowerCase()) ? (
         <section
           className="surface settings-panel"
@@ -1012,6 +1025,7 @@ function SettingsOverview({
     "codex",
     "accounts",
     "github",
+    "gitlab",
   );
 
   return (
@@ -1179,6 +1193,12 @@ function SettingsOverview({
                 </span>
                 <ChevronRight size={16} aria-hidden="true" />
               </button>
+              <button type="button" className="settings-overview-row settings-connection-row" onClick={() => scrollToSettingsSection("settings-gitlab")}>
+                <span className="settings-row-icon" aria-hidden="true"><GitPullRequest size={18} /></span>
+                <div><strong>GitLab</strong><span>GitLab.com and self-managed hosts</span></div>
+                <GitlabConnectionSummary />
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
             </div>
           </section>
         </div>
@@ -1338,38 +1358,6 @@ function SettingsNavigationRow({
   );
 }
 
-function SettingsIconAction({
-  icon: Icon,
-  ariaLabel,
-  tooltip,
-  buttonRef,
-  danger = false,
-  disabled = false,
-  onActivate,
-}: {
-  icon: typeof Monitor;
-  ariaLabel: string;
-  tooltip: string;
-  buttonRef?: Ref<HTMLButtonElement>;
-  danger?: boolean;
-  disabled?: boolean;
-  onActivate: () => void;
-}) {
-  return (
-    <button
-      ref={buttonRef}
-      className={`settings-icon-action${danger ? " danger" : ""}`}
-      type="button"
-      aria-label={ariaLabel}
-      data-tooltip={tooltip}
-      disabled={disabled}
-      onClick={onActivate}
-    >
-      <Icon size={16} aria-hidden="true" />
-    </button>
-  );
-}
-
 function SettingsSwitch({
   ariaLabel,
   checked,
@@ -1400,32 +1388,6 @@ function scrollToSettingsSection(id: string) {
     behavior: "smooth",
     block: "start",
   });
-}
-
-function SettingsDetailHeader({
-  icon: Icon,
-  title,
-  status,
-  statusContent,
-}: {
-  icon: typeof Monitor;
-  title: string;
-  status?: SettingsDetailStatus;
-  statusContent?: ReactNode;
-}) {
-  return (
-    <div className="surface-header settings-detail-header">
-      <div className="settings-detail-heading">
-        <span className="settings-detail-header-icon" aria-hidden="true">
-          <Icon size={20} />
-        </span>
-        <div className="settings-detail-header-copy">
-          <h2>{title}</h2>
-        </div>
-      </div>
-      {statusContent ?? (status ? <SettingsStatusBadge {...status} /> : null)}
-    </div>
-  );
 }
 
 function NotificationSettings({

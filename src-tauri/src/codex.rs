@@ -455,6 +455,7 @@ pub(crate) async fn send_request(
 }
 
 pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTurnActivityResponse {
+    let mut async_messages = Vec::new();
     let mut commands: Vec<HistoricalCommandActivity> = Vec::new();
     let mut edited_files: Vec<HistoricalEditedFile> = Vec::new();
     let mut tool_activities: Vec<HistoricalToolActivity> = Vec::new();
@@ -464,7 +465,13 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
         .cloned()
         .unwrap_or_default();
 
+    let events = items.iter().rev().map(crate::stream_projection::item_event).collect();
     for item in items {
+        let is_question = item.get("type").and_then(Value::as_str) == Some("agentMessage")
+            && item.get("delivery").and_then(Value::as_str) == Some("async");
+        let is_reply = matches!(item.get("type").and_then(Value::as_str), Some("userMessage" | "steeringUserMessage"))
+            && async_question_reply_text(&item).is_some();
+        if is_question || is_reply { async_messages.push(item.clone()); }
         match item.get("type").and_then(Value::as_str) {
             Some("commandExecution") => {
                 let id = item
@@ -584,6 +591,8 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
     }
 
     HistoricalTurnActivityResponse {
+        events,
+        async_messages,
         commands,
         edited_files,
         tool_activities,
@@ -689,7 +698,7 @@ fn safe_protocol_identifier(value: Option<&str>) -> Option<String> {
     Some(value.to_string())
 }
 
-fn sanitize_tool_activity_title(value: &str) -> Option<String> {
+pub(crate) fn sanitize_tool_activity_title(value: &str) -> Option<String> {
     let normalized = value
         .chars()
         .map(|character| {
@@ -850,6 +859,26 @@ pub(crate) fn project_subagent_turn(turn: &Value) -> Option<ProjectedSubagentTur
 }
 
 pub(crate) fn project_subagent_item(item: &Value) -> Option<Value> {
+    let mut projected = project_subagent_item_legacy(item).or_else(|| {
+        let item_type = item.get("type").and_then(Value::as_str)?;
+        if !matches!(item_type, "userMessage" | "agentMessage" | "reasoning" | "plan") {
+            Some(project_activity_item(item.get("id").and_then(Value::as_str).unwrap_or("activity").into(), "mcp", "Agent activity".into(), project_status_label(item.get("status"))))
+        } else { None }
+    })?;
+    if projected.get("kind").and_then(Value::as_str) == Some("activity") {
+        let mut summary = crate::stream_projection::item_summary(item);
+        // Keep the existing subagent summary projection free of command bodies.
+        // Classification/path metadata is sufficient until details are opened.
+        if let Some(fields) = summary.as_object_mut() { fields.remove("command"); }
+        if let Some(actions) = summary.get_mut("commandActions").and_then(Value::as_array_mut) {
+            for action in actions { if let Some(fields) = action.as_object_mut() { fields.remove("command"); } }
+        }
+        projected.as_object_mut()?.insert("protocolItem".into(), summary);
+    }
+    Some(projected)
+}
+
+fn project_subagent_item_legacy(item: &Value) -> Option<Value> {
     let item_type = item.get("type").and_then(Value::as_str)?;
     let id = item
         .get("id")
@@ -858,7 +887,7 @@ pub(crate) fn project_subagent_item(item: &Value) -> Option<Value> {
         .to_string();
     match item_type {
         "userMessage" => {
-            let text = project_user_message_text(item);
+            let text = async_question_reply_text(item).unwrap_or_else(|| project_user_message_text(item));
             (!text.is_empty()).then(|| {
                 json!({
                     "id": id,
@@ -873,7 +902,9 @@ pub(crate) fn project_subagent_item(item: &Value) -> Option<Value> {
                 "id": id,
                 "kind": "assistant",
                 "text": text,
-                "phase": item.get("phase").and_then(Value::as_str)
+                "phase": if item.get("delivery").and_then(Value::as_str) == Some("async") { Some("commentary") } else { item.get("phase").and_then(Value::as_str) },
+                "delivery": item.get("delivery"),
+                "questions": item.get("questions")
             }))
         }
         "plan" => {
@@ -1148,7 +1179,7 @@ pub(crate) fn project_external_transcript_turn(
     let prompt = items
         .iter()
         .filter(|item| item.get("type").and_then(Value::as_str) == Some("userMessage"))
-        .map(external_item_text)
+        .map(|item| async_question_reply_text(item).unwrap_or_else(|| external_item_text(item)))
         .filter(|text| !text.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -1160,7 +1191,8 @@ pub(crate) fn project_external_transcript_turn(
 
     let agent_messages = items
         .iter()
-        .filter(|item| item.get("type").and_then(Value::as_str) == Some("agentMessage"))
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("agentMessage")
+            && item.get("delivery").and_then(Value::as_str) != Some("async"))
         .collect::<Vec<_>>();
     let final_agent = agent_messages
         .iter()
@@ -2013,4 +2045,20 @@ pub(crate) fn codex_delete_profile(
         })?;
     }
     Ok(())
+}
+
+/// Decode Codex question replies for display, leaving malformed envelopes untouched.
+fn async_question_reply_text(item: &Value) -> Option<String> {
+    let content = item.get("content").or_else(|| item.get("input"))?.as_array()?;
+    if content.len() != 1 { return None; }
+    let text = content[0].get("text")?.as_str()?.trim();
+    let body = text.strip_prefix("<send_user_message_question_reply>")?
+        .strip_suffix("</send_user_message_question_reply>")?;
+    let parsed: Value = serde_json::from_str(body.trim()).ok()?;
+    let replies = parsed.as_array().cloned().unwrap_or_else(|| vec![parsed]);
+    if replies.is_empty() { return None; }
+    replies.iter().map(|reply| {
+        reply.get("questionItemId")?.as_str()?;
+        Some(format!("{}\n{}", reply.get("question")?.as_str()?, reply.get("answer")?.as_str()?))
+    }).collect::<Option<Vec<_>>>().map(|parts| parts.join("\n\n"))
 }

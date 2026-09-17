@@ -33,7 +33,7 @@ describe("codexEventReducer", () => {
       result: null,
       error: null,
     });
-    expect(generating.streamEvents).toEqual([]);
+    expect(generating.streamEvents).toEqual([expect.objectContaining({ text: "Generating image", activityIds: ["image-1"] })]);
 
     const completed = applyCodexMessage(generating, {
       method: "item/completed",
@@ -793,7 +793,7 @@ describe("codexEventReducer", () => {
       status: "completed",
       durationMs: 1250,
     });
-    expect(JSON.stringify(state)).not.toMatch(/mcpToolCall|Started|Completed/u);
+    expect(state.streamEvents.map(event => event.text).join(" ")).not.toMatch(/mcpToolCall|Started|Completed/u);
   });
 
   it("handles completed and out-of-order tool events idempotently", () => {
@@ -945,7 +945,7 @@ describe("codexEventReducer", () => {
       },
     });
 
-    expect(state.editedFiles).toHaveLength(2);
+    expect(state.editedFiles).toHaveLength(1); // The newest aggregate diff replaces the prior aggregate.
     expect(state.editedFiles[0]).toMatchObject({
       path: "src/App.tsx",
       additions: 3,

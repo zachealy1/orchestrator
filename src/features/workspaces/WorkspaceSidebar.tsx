@@ -2,14 +2,23 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
+  Clock3,
+  Files,
   FileText,
   Folder,
   FolderOpen,
   Loader2,
+  MessageCircle,
   Plus,
   Trash2,
 } from "lucide-react";
-import { memo, type CSSProperties, type RefObject } from "react";
+import {
+  memo,
+  useLayoutEffect,
+  useRef,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -23,7 +32,28 @@ import type {
   WorkspaceTreeEntry,
 } from "./types";
 
+import type { ChatListItem } from "../conversations/types";
+import { WorkspaceHistoryRow } from "../conversations/WorkspaceHistoryRow";
+import { sortHistoryChatsByActivity } from "../conversations/historyProjection";
+import {
+  applicationCommandAriaShortcut,
+  formatApplicationCommandShortcut,
+} from "../shortcuts/applicationShortcuts";
+import type { SidebarMode } from "./sidebarPreferences";
+import { groupPriorityChats } from "./priorityHistory";
+import type {
+  SidebarHistoryState,
+  PriorityHistoryState,
+} from "./useSidebarHistory";
+export type { SidebarMode } from "./sidebarPreferences";
+
 export type WorkspaceSidebarModel = {
+  mode: SidebarMode;
+  histories: Readonly<Record<number, SidebarHistoryState>>;
+  priority: PriorityHistoryState;
+  selectedChatId: number | null;
+  runningChatActivity: ReadonlyMap<number, string>;
+  unreadChats: Readonly<Record<number, readonly number[]>>;
   workspaces: Workspace[];
   selectedWorkspaceId: number | null;
   taskViewActive: boolean;
@@ -42,6 +72,14 @@ export type WorkspaceSidebarModel = {
 };
 
 export type WorkspaceSidebarActions = {
+  setMode: (mode: SidebarMode) => void;
+  selectChat: (chat: ChatListItem) => void;
+  openChatContextMenu: (
+    chat: ChatListItem,
+    event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
+  ) => void;
+  loadChats: (workspace: Workspace, more?: boolean) => void;
+  retryPriority: () => void;
   addWorkspace: () => void;
   toggleWorkspace: (workspace: Workspace) => void;
   selectWorkspace: (workspaceId: number) => void;
@@ -54,6 +92,7 @@ export type WorkspaceSidebarActions = {
     event: ReactMouseEvent<HTMLElement>,
   ) => void;
   requestWorkspaceDelete: (workspace: Workspace) => void;
+  retryDirectory: (workspace: Workspace, directoryPath: string) => void;
   toggleDirectory: (
     workspace: Workspace,
     directoryPath: string,
@@ -81,6 +120,124 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   model: WorkspaceSidebarModel;
   actions: WorkspaceSidebarActions;
 }) {
+  const listRef = useRef<HTMLElement | null>(null);
+  const scrollPositions = useRef<Record<SidebarMode, number>>({
+    chats: 0,
+    files: 0,
+    priority: 0,
+  });
+  useLayoutEffect(() => {
+    const element = listRef.current;
+    if (element) element.scrollTop = scrollPositions.current[model.mode];
+  }, [model.mode]);
+
+  function renderChat(
+    chat: ChatListItem,
+    metadata?: string,
+    workspaceLabel?: string,
+  ) {
+    return (
+      <WorkspaceHistoryRow
+        key={chat.id}
+        chat={chat}
+        selected={model.selectedChatId === chat.id}
+        running={model.runningChatActivity.has(chat.id)}
+        unread={(model.unreadChats[chat.workspace_id] ?? []).includes(chat.id)}
+        onSelect={actions.selectChat}
+        onOpenContextMenu={actions.openChatContextMenu}
+        metadata={metadata}
+        workspaceLabel={workspaceLabel}
+      />
+    );
+  }
+
+  function renderChats(workspace: Workspace) {
+    const state = model.histories[workspace.id];
+    return (
+      <div
+        className="sidebar-workspace-chats"
+        aria-label={`${workspace.label} chats`}
+      >
+        {!state ||
+        state.status === "idle" ||
+        (state.status === "loading" && state.chats.length === 0) ? (
+          <p className="workspace-tree-status" role="status">
+            Loading chats...
+          </p>
+        ) : null}
+        {state?.error ? (
+          <div className="workspace-tree-status error" role="alert">
+            {state.error}
+            <button type="button" onClick={() => actions.loadChats(workspace)}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {state?.status === "loaded" && state.chats.length === 0 ? (
+          <p className="workspace-tree-status">No chats yet.</p>
+        ) : null}
+        {sortHistoryChatsByActivity(
+          state?.chats ?? [],
+          model.runningChatActivity,
+        ).map((chat) => renderChat(chat))}
+        {state?.hasMore ? (
+          <button
+            type="button"
+            className="sidebar-load-more"
+            disabled={state.status === "loading"}
+            onClick={() => actions.loadChats(workspace, true)}
+          >
+            Show more
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderPriority() {
+    const chats = model.priority.chats.filter(
+      (chat) => !model.runningChatActivity.has(chat.id),
+    );
+    return (
+      <div className="sidebar-priority" aria-label="Recently finished chats">
+        {model.priority.status === "loading" && chats.length === 0 ? (
+          <p role="status" className="workspace-tree-status">
+            Loading chats...
+          </p>
+        ) : null}
+        {model.priority.error ? (
+          <div role="alert" className="workspace-tree-status error">
+            {model.priority.error}
+            <button type="button" onClick={actions.retryPriority}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {model.priority.status === "loaded" && chats.length === 0 ? (
+          <p className="workspace-tree-status">
+            No chats finished in the last 7 days.
+          </p>
+        ) : null}
+        {groupPriorityChats(chats, model.priority.now).map((group) => (
+          <section
+            className="sidebar-priority-group"
+            key={group.label}
+            aria-label={group.label}
+          >
+            <h3 className="sidebar-priority-heading">{group.label}</h3>
+            {group.chats.map((chat) =>
+              renderChat(
+                chat,
+                `${chat.latest_finished_status} · ${new Date(chat.latest_finished_at).toLocaleString()}`,
+                model.workspaces.find((workspace) => workspace.id === chat.workspace_id)?.label,
+              ),
+            )}
+          </section>
+        ))}
+      </div>
+    );
+  }
+
   function gitStatusMap(workspace: Workspace) {
     return model.gitStatusByWorkspaceId.get(workspace.id) ?? EMPTY_GIT_STATUS;
   }
@@ -105,7 +262,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       visibleEntries.map((entry) => [entry.relativePath, entry]),
     );
     const merged = [...visibleEntries];
-    const directoryRelativePath = relativeDirectoryPath(workspace, directoryPath);
+    const directoryRelativePath = relativeDirectoryPath(
+      workspace,
+      directoryPath,
+    );
 
     statusByPath.forEach((status) => {
       if (status.statusKind === "deleted") return;
@@ -164,6 +324,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         >
           <AlertCircle size={14} aria-hidden="true" />
           <span>{state.error ?? "Unable to load folder"}</span>
+          <button
+            type="button"
+            onClick={() => actions.retryDirectory(workspace, directoryPath)}
+          >
+            Retry
+          </button>
         </div>
       );
     }
@@ -180,7 +346,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       );
     }
 
-    return entries.map((entry) => renderTreeEntry(workspace, entry, depth));
+    return (
+      <div className="workspace-tree-children" style={treeIndentStyle(depth)}>
+        {entries.map((entry) => renderTreeEntry(workspace, entry, depth))}
+      </div>
+    );
   }
 
   function renderTreeEntry(
@@ -226,10 +396,17 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                 actions.toggleDirectory(workspace, entry.path, !entry.gitGhost)
               }
             >
-              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {expanded ? (
+                <ChevronDown size={14} />
+              ) : (
+                <ChevronRight size={14} />
+              )}
             </button>
           ) : (
-            <span className="workspace-tree-chevron-placeholder" aria-hidden="true" />
+            <span
+              className="workspace-tree-chevron-placeholder"
+              aria-hidden="true"
+            />
           )}
 
           <button
@@ -260,7 +437,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             )}
             <span className="workspace-entry-name">{entry.name}</span>
             {dirtyDirectory ? (
-              <span className="workspace-git-dot" aria-label="Contains changes" />
+              <span
+                className="workspace-git-dot"
+                aria-label="Contains changes"
+              />
             ) : null}
             {gitStatus ? (
               <span
@@ -282,27 +462,65 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   return (
     <div className="rail-section">
       <div
+        className="sidebar-mode-selector"
+        role="group"
+        aria-label="Sidebar mode"
+        data-tauri-drag-region="false"
+      >
+        {([
+          ["chats", "Chats", MessageCircle, "sidebar-chats"],
+          ["files", "Files", Files, "sidebar-files"],
+          ["priority", "Priority", Clock3, "sidebar-priority"],
+        ] as const).map(([mode, label, Icon, commandId]) => (
+          <button
+            key={mode}
+            type="button"
+            aria-label={label}
+            data-tooltip={`${label} (${formatApplicationCommandShortcut(commandId)})`}
+            aria-keyshortcuts={applicationCommandAriaShortcut(commandId)}
+            aria-pressed={model.mode === mode}
+            onClick={() => actions.setMode(mode)}
+          >
+            <Icon size={18} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      <div
         className="rail-section-header"
         data-tauri-drag-region={model.headerDragRegion}
       >
-        <span id="workspaces-heading">Workspaces</span>
-        <button
-          className="workspace-add"
-          type="button"
-          onClick={actions.addWorkspace}
-          aria-label="Add workspace"
-          data-tooltip="Add workspace"
-        >
-          <Plus size={16} aria-hidden="true" />
-        </button>
+        <span id="workspaces-heading">
+          {model.mode === "chats"
+            ? "Chats"
+            : model.mode === "priority"
+              ? "Priority"
+              : "Files"}
+        </span>
+        {model.mode !== "priority" ? (
+          <button
+            className="workspace-add"
+            type="button"
+            onClick={actions.addWorkspace}
+            aria-label="Add workspace"
+            data-tooltip="Add workspace"
+          >
+            <Plus size={16} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
 
       <nav
         className="workspace-list"
+        ref={listRef}
+        onScroll={(event) => {
+          scrollPositions.current[model.mode] = event.currentTarget.scrollTop;
+        }}
         aria-labelledby="workspaces-heading"
         data-tauri-drag-region="false"
       >
-        {model.workspaces.length === 0 ? (
+        {model.mode === "priority" ? (
+          renderPriority()
+        ) : model.workspaces.length === 0 ? (
           <p className="muted">No workspaces yet.</p>
         ) : (
           model.workspaces.map((workspace) => {
@@ -352,15 +570,26 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
                     title={workspace.label}
                   >
                     <span className="workspace-icon" aria-hidden="true">
-                      {expanded ? <FolderOpen size={16} /> : <Folder size={16} />}
+                      {expanded ? (
+                        <FolderOpen size={16} />
+                      ) : (
+                        <Folder size={16} />
+                      )}
                     </span>
                     <span className="workspace-name">{workspace.label}</span>
                     {workspaceDirty ? (
-                      <span className="workspace-git-dot" aria-label="Contains changes" />
+                      <span
+                        className="workspace-git-dot"
+                        aria-label="Contains changes"
+                      />
                     ) : null}
                   </button>
                 </div>
-                {expanded ? renderDirectory(workspace, workspace.path, 1) : null}
+                {expanded
+                  ? model.mode === "chats"
+                    ? renderChats(workspace)
+                    : renderDirectory(workspace, workspace.path, 1)
+                  : null}
               </div>
             );
           })

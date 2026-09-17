@@ -1,3 +1,4 @@
+import { InstallationActivityController } from "../features/installationActivity/InstallationActivityController";
 import {
   createContext,
   useContext,
@@ -19,13 +20,14 @@ import {
 } from "../lib/subagents";
 import { TranscriptGeometryCache } from "../lib/transcriptVirtualization";
 import { BoundedLruCache } from "../shared/cache/BoundedLruCache";
-import { AnimationFrameBatcher } from "../shared/AnimationFrameBatcher";
+import { CodexStreamScheduler } from "../features/codex/CodexStreamScheduler";
 import { AsyncResourceCache } from "../shared/cache/AsyncResourceCache";
-import type { CodexMessage, CodexProfileKey } from "../features/codex/types";
+
 import { HistoricalTranscriptCache } from "../features/conversations/HistoricalTranscriptCache";
 import type { HistoricalTurnActivityResponse } from "../codexClient";
 import { WorkspaceTaskMemoryStore } from "../features/conversations/WorkspaceTaskMemoryStore";
 import { WorkspaceFilePreviewService } from "../features/workspaces/WorkspaceFilePreviewService";
+import { ChatTitleCoordinator } from "../features/conversations/ChatTitleCoordinator";
 
 export type CachedTranscriptState = {
   snapshot: StateSnapshot;
@@ -33,23 +35,24 @@ export type CachedTranscriptState = {
 };
 
 export class AppServices {
+  readonly installationActivity = new InstallationActivityController();
   readonly database = new FrontendDatabase();
   readonly repositories = createAppRepositories(this.database);
+  readonly chatTitles = new ChatTitleCoordinator();
   readonly codexEvents = new CodexEventRouter();
   readonly runCoordinator = new RunCoordinator();
   readonly activeRuns = new ActiveRunRegistry();
   readonly runEvents = new RunEventBuffer((events) =>
     this.repositories.runs.appendRunEvents(events),
   );
-  readonly codexNotificationFrames = new AnimationFrameBatcher<{
-    profileKey: CodexProfileKey;
-    message: CodexMessage;
-  }>();
+  readonly codexNotificationFrames = new CodexStreamScheduler();
   readonly historicalTranscripts = new HistoricalTranscriptCache(5, 2_000_000);
   readonly historicalActivities = new AsyncResourceCache<
     string,
     HistoricalTurnActivityResponse
   >(200);
+  readonly activityDetails = new AsyncResourceCache<string, unknown>(100);
+  readonly activityDisclosures = new BoundedLruCache<string, boolean>(1000);
   readonly workspaceTaskMemories = new WorkspaceTaskMemoryStore();
   readonly codePreview = new CodePreviewCache();
   readonly codePreviewHighlighting = new CodePreviewHighlightingService({
@@ -100,6 +103,8 @@ export class AppServices {
   }
 
   dispose() {
+    this.installationActivity.dispose();
+    this.chatTitles.dispose();
     this.database.dispose();
     this.codexEvents.dispose();
     this.runCoordinator.dispose();
@@ -108,6 +113,8 @@ export class AppServices {
     this.codexNotificationFrames.dispose();
     this.historicalTranscripts.clear();
     this.historicalActivities.clear();
+    this.activityDetails.clear();
+    this.activityDisclosures.clear();
     this.workspaceTaskMemories.clear();
     this.codePreviewHighlighting.dispose();
     this.codePreview.clear();
@@ -121,6 +128,7 @@ export class AppServices {
 }
 
 const AppServicesContext = createContext<AppServices | null>(null);
+export const useOptionalAppServices = () => useContext(AppServicesContext);
 
 export function AppServicesProvider({
   services,

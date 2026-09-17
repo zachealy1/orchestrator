@@ -1,4 +1,5 @@
 import type { CodexMessage } from "../features/codex/types";
+import { streamIdentity, streamIdentityKey } from "./streamIdentity";
 
 const FRAME_BATCHED_METHODS = new Set([
   "item/agentMessage/delta",
@@ -52,25 +53,5 @@ function canMergeDeltaMessages(left: CodexMessage, right: CodexMessage) {
     return false;
   }
 
-  return streamIdentity(left.params) === streamIdentity(right.params);
-}
-
-function streamIdentity(params: Record<string, unknown>) {
-  const item = readObject(params.item);
-  return [
-    params.threadId,
-    params.turnId,
-    params.itemId ?? item.id,
-    params.commandId,
-    params.processId,
-    params.callId,
-  ]
-    .map((value) => (value === undefined || value === null ? "" : String(value)))
-    .join(":");
-}
-
-function readObject(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {};
+  return streamIdentityKey(streamIdentity(left)) === streamIdentityKey(streamIdentity(right));
 }

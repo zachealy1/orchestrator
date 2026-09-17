@@ -1,8 +1,35 @@
 # Privacy and local data
 
-Orchestrator does not add device identifiers, an application-usage telemetry service, or a central analytics backend. The Analytics screen's local activity summaries are calculated from locally stored task records. Account plan limits are obtained from the selected Codex account.
+Production releases include minimal installation activity tracking through PostHog, with an opt-out in Settings. The Analytics screen's local activity summaries are calculated from locally stored task records. Account plan limits are obtained from the selected Codex account.
 
 Using AI or external integrations still communicates with their providers. Prompts, selected context, tool output and files an agent is permitted to inspect may be sent to OpenAI or a connected service. These services have their own account requirements and privacy policies. Review access settings and tool approvals; do not assume a repository stays offline because the desktop interface is local.
+
+## Installation activity
+
+Production releases share one `active_day` event on the first app opening, return
+to focus, or interaction each UTC day. The event contains a random installation
+ID, an event ID, the first activity timestamp and UTC date, app version, and release
+environment. This measures active installations over 1, 7, and 30 days; it does not
+identify a person or connect your Codex accounts.
+
+Events go to PostHog's EU Cloud. Person-profile creation and location enrichment
+are disabled, and the project discards client IP data from analytics. As with any
+network request, the service still receives your connection. Prompts, files,
+repository paths, email addresses, account details, screenshots, and interaction
+contents are not included. There is no automatic click capture or session replay.
+
+Turn off **Settings → Privacy → Share installation activity** to stop collection
+and discard pending delivery. The app attempts to cancel any in-flight request;
+already received events remain in PostHog. Re-enabling sends current activity only.
+Offline events can be retried for up to 35 days with their original dates. The ID
+and daily deduplication records remain in your local application data across
+upgrades and account changes. Clearing that data creates a new ID; copying it to
+another computer can share the ID. Development, test, unconfigured builds, and
+release rehearsals do not send activity.
+
+The app's Analytics screen continues to show local task usage. Installation
+activity is a separate maintainer dashboard; GitHub download counts are separate
+again. See the [implementation and metric definitions](../installation-activity.md).
 
 ## Local storage
 

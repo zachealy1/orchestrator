@@ -4,6 +4,9 @@ import { applicationInvoke as __TAURI_INVOKE } from "../shared/nativeCommands";
 
 /** Commands */
 export const commands = {
+	analyticsRecordActivity: () => __TAURI_INVOKE<null>("analytics_record_activity"),
+	analyticsGetPreferences: () => __TAURI_INVOKE<AnalyticsPreferences>("analytics_get_preferences"),
+	analyticsSetEnabled: (enabled: boolean) => __TAURI_INVOKE<AnalyticsPreferences>("analytics_set_enabled", { enabled }),
 	codexEngineStatus: () => __TAURI_INVOKE<CodexEngineStatus>("codex_engine_status"),
 	appUpdateState: () => __TAURI_INVOKE<AppUpdateState>("app_update_state"),
 	appUpdateCheck: () => __TAURI_INVOKE<AppUpdateState>("app_update_check"),
@@ -25,6 +28,10 @@ export const commands = {
 	codexProjectedSubagentThreadRead: (accountId: number | null, profileKey: string, threadId: string) => __TAURI_INVOKE<ProjectedSubagentThread>("codex_projected_subagent_thread_read", { accountId, profileKey, threadId }),
 	codexDefaultProfileTurnActivity: (threadId: string, turnId: string, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_default_profile_turn_activity", { threadId, turnId, cursor, limit }),
 	codexPersistedRunActivity: (runId: number, cursor: string | null, limit: number | null) => __TAURI_INVOKE<HistoricalTurnActivityResponse>("codex_persisted_run_activity", { runId, cursor, limit }),
+	codexActivityItemRead: (profileKey: string, runId: number | null, threadId: string, turnId: string, itemId: string) => __TAURI_INVOKE<unknown>("codex_activity_item_read", { profileKey, runId, threadId, turnId, itemId }),
+	widgetSandboxCreate: (html: string, policy: unknown) => __TAURI_INVOKE<string>("widget_sandbox_create", { html, policy }),
+	widgetSandboxClose: (token: string) => __TAURI_INVOKE<void>("widget_sandbox_close", { token }),
+	saveActivityResource: (name: string, text: string | null, blob: string | null) => __TAURI_INVOKE<boolean>("save_activity_resource", { name, text, blob }),
 	codexDefaultProfileThreadTranscriptSync: (threadId: string, sourceVersion: string, pageSize: number | null, requestId: string) => __TAURI_INVOKE<ExternalTranscriptSnapshot>("codex_default_profile_thread_transcript_sync", { threadId, sourceVersion, pageSize, requestId }),
 	codexDefaultProfileThreadTranscriptCancel: (requestId: string) => __TAURI_INVOKE<null>("codex_default_profile_thread_transcript_cancel", { requestId }),
 	codexResolveServerRequest: (accountId: number, id: unknown, requestToken: string, result: unknown) => __TAURI_INVOKE<null>("codex_resolve_server_request", { accountId, id, requestToken, result }),
@@ -125,12 +132,20 @@ export const commands = {
 	kanbanCompleteLocalReviewWithoutChanges: (cardId: string) => __TAURI_INVOKE<KanbanCardDto>("kanban_complete_local_review_without_changes", { cardId }),
 	kanbanSetInheritedContext: (request: SetKanbanInheritedContextRequest) => __TAURI_INVOKE<null>("kanban_set_inherited_context", { request }),
 	kanbanGetInheritedContext: (cardId: string) => __TAURI_INVOKE<string | null>("kanban_get_inherited_context", { cardId }),
+	gitlabConnections: () => __TAURI_INVOKE<GitlabConnectionStatus[]>("gitlab_connections"),
+	gitlabConnect: (host: string, token: string | null) => __TAURI_INVOKE<null>("gitlab_connect", { host, token }),
+	gitlabCancelConnection: (host: string) => __TAURI_INVOKE<null>("gitlab_cancel_connection", { host }),
+	gitlabDisconnect: (host: string) => __TAURI_INVOKE<null>("gitlab_disconnect", { host }),
+	reviewConnectionRequirements: (paths: string[]) => __TAURI_INVOKE<ReviewConnectionRequirement[]>("review_connection_requirements", { paths }),
+	reviewPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<ReviewPublicationResult>("review_publish_kanban_card", { cardId }),
+	reviewSyncKanbanRequests: (workspaceId: number | null, knownBoardRevision: number | null) => __TAURI_INVOKE<number>("review_sync_kanban_requests", { workspaceId, knownBoardRevision }),
+	reviewCompleteKanbanWithoutRequest: (cardId: string) => __TAURI_INVOKE<null>("review_complete_kanban_without_request", { cardId }),
 	githubConnectionStatus: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connection_status"),
 	githubConnect: () => __TAURI_INVOKE<GithubConnectionStatus>("github_connect"),
 	githubContinueConnection: (generation: number, copyCode: boolean) => __TAURI_INVOKE<GithubConnectionStatus>("github_continue_connection", { generation, copyCode }),
 	githubCancelConnection: () => __TAURI_INVOKE<null>("github_cancel_connection"),
 	githubDisconnect: () => __TAURI_INVOKE<null>("github_disconnect"),
-	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<GithubPublicationResult>("github_publish_kanban_card", { cardId }),
+	githubPublishKanbanCard: (cardId: string) => __TAURI_INVOKE<ReviewPublicationResult>("github_publish_kanban_card", { cardId }),
 	githubSyncKanbanPullRequests: (workspaceId: number | null, knownBoardRevision: number | null) => __TAURI_INVOKE<number>("github_sync_kanban_pull_requests", { workspaceId, knownBoardRevision }),
 	githubCompleteKanbanWithoutPullRequest: (cardId: string) => __TAURI_INVOKE<null>("github_complete_kanban_without_pull_request", { cardId }),
 	kanbanGitProvision: (request: KanbanGitProvisionRequest) => __TAURI_INVOKE<KanbanGitProvisionResult>("kanban_git_provision", { request }),
@@ -209,6 +224,11 @@ export type AgentNotificationTarget = {
 	threadId: string | null,
 	turnId: string | null,
 	subagentThreadId: string | null,
+};
+
+export type AnalyticsPreferences = {
+	enabled: boolean,
+	available: boolean,
 };
 
 export type AppUpdateState = {
@@ -390,9 +410,16 @@ export type GithubConnectionStatus = {
 	browserOpened: boolean,
 };
 
-export type GithubPublicationResult = {
-	cardId: string,
-	pullRequests: KanbanPullRequestDto[],
+export type GitlabConnectionStatus = {
+	host: string,
+	available: boolean,
+	connected: boolean,
+	login: string | null,
+	displayName: string | null,
+	avatarUrl: string | null,
+	status: string,
+	message: string | null,
+	cliVersion: string | null,
 };
 
 export type HistoricalCommandActivity = {
@@ -428,6 +455,8 @@ export type HistoricalToolActivityDetail = {
 };
 
 export type HistoricalTurnActivityResponse = {
+	events: unknown[],
+	asyncMessages: unknown[],
 	commands: HistoricalCommandActivity[],
 	editedFiles: HistoricalEditedFile[],
 	toolActivities: HistoricalToolActivity[],
@@ -671,6 +700,9 @@ export type KanbanLocalReviewDto = {
 	summary: string | null,
 	reviewChannel: string,
 	canPublishGithub: boolean,
+	canPublishRemote: boolean,
+	publicationDestination: string | null,
+	publicationBlocker: string | null,
 	repositories: KanbanLocalReviewRepositoryDto[],
 };
 
@@ -689,6 +721,10 @@ export type KanbanLocalReviewRepositoryDto = {
 };
 
 export type KanbanPullRequestDto = {
+	provider: string,
+	host: string,
+	projectId: number | null,
+	projectPath: string | null,
 	sourceRepositoryPath: string,
 	relativePath: string,
 	owner: string | null,
@@ -839,6 +875,18 @@ export type RejectKanbanPlanRequest = {
 export type RejectedDroppedContextPath = {
 	path: string,
 	reason: string,
+};
+
+export type ReviewConnectionRequirement = {
+	repositoryPath: string,
+	provider: string | null,
+	host: string | null,
+	message: string | null,
+};
+
+export type ReviewPublicationResult = {
+	cardId: string,
+	pullRequests: KanbanPullRequestDto[],
 };
 
 export type RunEventWrite = {

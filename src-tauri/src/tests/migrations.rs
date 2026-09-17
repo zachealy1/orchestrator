@@ -28,7 +28,7 @@ fn resolved_plugin_migrator(
 }
 
 #[test]
-fn existing_versions_one_through_twenty_five_upgrade_through_forty_seven() {
+fn existing_versions_one_through_twenty_five_upgrade_through_latest() {
     tauri::async_runtime::block_on(async {
         let mut connection = SqliteConnection::connect("sqlite::memory:")
             .await
@@ -58,7 +58,7 @@ fn existing_versions_one_through_twenty_five_upgrade_through_forty_seven() {
         .fetch_one(&mut connection)
         .await
         .expect("count upgraded migrations");
-        assert_eq!(applied_count, 47);
+        assert_eq!(applied_count, MIGRATION_DEFINITIONS.len() as i64);
 
         resolved_plugin_migrator(MIGRATION_DEFINITIONS)
             .run_direct(&mut connection)
@@ -1707,4 +1707,218 @@ fn chat_title_generation_uses_supported_approval_configuration() {
         .windows(2)
         .any(|arguments| { arguments[0] == "-m" && arguments[1] == "gpt-5.4" }));
     assert_eq!(args.last().map(String::as_str), Some("-"));
+}
+
+#[test]
+fn restarted_token_counters_repair_history_without_guessing_missing_reports() {
+    tauri::async_runtime::block_on(async {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open token repair database");
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..47])
+            .run_direct(&mut connection)
+            .await
+            .expect("apply schema before token repair");
+        sqlx::query(
+            "INSERT INTO workspaces (id, path, label) VALUES (1, '/workspace', 'Workspace')",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+        // Zero, unknown, and positive-but-undercounted totals from restarted
+        // counters; continuing counters; missing baseline; and absent evidence.
+        let cases = [
+            (
+                1,
+                Some(0),
+                Some(0),
+                Some((100, 100, 80, 80)),
+                Some(800),
+                Some(700),
+            ),
+            (
+                2,
+                None,
+                None,
+                Some((100, 100, 80, 80)),
+                Some(800),
+                Some(700),
+            ),
+            (
+                3,
+                Some(300),
+                Some(200),
+                Some((100, 100, 80, 80)),
+                Some(800),
+                Some(700),
+            ),
+            (
+                4,
+                Some(300),
+                Some(300),
+                Some((600, 100, 450, 50)),
+                Some(300),
+                Some(300),
+            ),
+            (
+                5,
+                None,
+                None,
+                Some((600, 100, 450, 50)),
+                Some(300),
+                Some(300),
+            ),
+            (6, None, None, None, None, None),
+        ];
+        for (id, tokens, cached, first, _, _) in cases {
+            sqlx::query("INSERT INTO tasks (id, workspace_id, original_prompt, improved_prompt, route_recommendation, budget_tokens, status) VALUES ($1, 1, 'Task', 'Task', 'direct', 1000, 'completed')")
+                .bind(id).execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO runs (id, task_id, workspace_id, codex_thread_id, status) VALUES ($1, $1, 1, 'thread', 'completed')")
+                .bind(id).execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO token_usage_snapshots (run_id, thread_id, total_tokens, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, run_tokens, run_cached_input_tokens) VALUES ($1, 'thread', 800, 750, 700, 50, 0, $2, $3)")
+                .bind(id).bind(tokens).bind(cached).execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO run_events (run_id, sequence, event_type, method, payload_json) VALUES ($1, 0, 'notification', 'thread/tokenUsage/updated', 'invalid json')")
+                .bind(id).execute(&mut connection).await.unwrap();
+            // A child thread's report must not establish the parent's baseline.
+            sqlx::query("INSERT INTO run_events (run_id, sequence, event_type, method, payload_json) VALUES ($1, 1, 'notification', 'thread/tokenUsage/updated', $2)")
+                .bind(id).bind(json!({"params": {"threadId": "child", "tokenUsage": {"total": {"totalTokens": 1}, "last": {"totalTokens": 1}}}}).to_string())
+                .execute(&mut connection).await.unwrap();
+            if let Some((total, last, cached, last_cached)) = first {
+                let payload = json!({"params": {"threadId": "thread", "tokenUsage": {
+                    "total": {"totalTokens": total, "cachedInputTokens": cached},
+                    "last": {"totalTokens": last, "cachedInputTokens": last_cached}
+                }}})
+                .to_string();
+                sqlx::query("INSERT INTO run_events (run_id, sequence, event_type, method, payload_json) VALUES ($1, 2, 'notification', 'thread/tokenUsage/updated', $2)")
+                    .bind(id).bind(payload).execute(&mut connection).await.unwrap();
+            }
+        }
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut connection)
+            .await
+            .expect("repair token counters");
+        for (id, _, _, _, expected, expected_cached) in cases {
+            let actual: (Option<i64>, Option<i64>) = sqlx::query_as(
+                "SELECT run_tokens, run_cached_input_tokens FROM token_usage_snapshots WHERE run_id = $1"
+            ).bind(id).fetch_one(&mut connection).await.unwrap();
+            assert_eq!(actual, (expected, expected_cached), "run {id}");
+        }
+    });
+}
+
+#[test]
+fn gitlab_migration_preserves_existing_reviews_and_mixed_completion() {
+    tauri::async_runtime::block_on(async {
+        let mut db = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        resolved_plugin_migrator(&MIGRATION_DEFINITIONS[..49])
+            .run_direct(&mut db)
+            .await
+            .unwrap();
+        sqlx::raw_sql("PRAGMA foreign_keys=ON;
+            INSERT INTO workspaces(id,path,label) VALUES(1,'/test','Test');
+            INSERT INTO chats(id,workspace_id,title,status) VALUES(1,1,'GitHub','completed'),(2,1,'Local','completed');
+            INSERT INTO kanban_cards(id,workspace_id,chat_id,title,description,access_mode,sort_position,stage,execution_state,review_channel)
+                VALUES('remote',1,1,'Remote','Work','full-access',0,'in_review','completed','github'),('local',1,2,'Local','Work','full-access',1,'in_review','completed','local');
+            INSERT INTO kanban_card_repository_selections(card_id,repository_path,label) VALUES('remote','/gh','GitHub');
+            INSERT INTO kanban_local_reviews(card_id,source_repository_path,relative_path,merge_started) VALUES('local','/local','.',1);
+            INSERT INTO kanban_pull_requests(card_id,source_repository_path,relative_path,owner,repository,pull_request_number,pull_request_url,base_branch,head_branch,publication_status,pull_request_state)
+                VALUES('remote','/gh','gh','owner','repo',12,'https://github.com/owner/repo/pull/12','main','card','merged','merged');
+        ").execute(&mut db).await.unwrap();
+        let schema_before: Vec<(String, String)> = sqlx::query_as("SELECT type,name FROM sqlite_master WHERE type IN ('trigger','index') AND sql IS NOT NULL ORDER BY name").fetch_all(&mut db).await.unwrap();
+        resolved_plugin_migrator(MIGRATION_DEFINITIONS)
+            .run_direct(&mut db)
+            .await
+            .unwrap();
+        let schema_after: Vec<(String, String)> = sqlx::query_as("SELECT type,name FROM sqlite_master WHERE type IN ('trigger','index') AND sql IS NOT NULL ORDER BY name").fetch_all(&mut db).await.unwrap();
+        assert!(schema_before.iter().all(|item| schema_after.contains(item)));
+        let request: (String, String, Option<String>, i64) = sqlx::query_as(
+            "SELECT provider,host,project_path,pull_request_number FROM kanban_pull_requests",
+        )
+        .fetch_one(&mut db)
+        .await
+        .unwrap();
+        assert_eq!(
+            request,
+            (
+                "github".into(),
+                "github.com".into(),
+                Some("owner/repo".into()),
+                12
+            )
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT review_channel FROM kanban_cards WHERE id='local'"
+            )
+            .fetch_one(&mut db)
+            .await
+            .unwrap(),
+            "local"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT merge_started FROM kanban_local_reviews WHERE card_id='local'"
+            )
+            .fetch_one(&mut db)
+            .await
+            .unwrap(),
+            1
+        );
+        sqlx::raw_sql("UPDATE kanban_cards SET review_channel='mixed' WHERE id='remote';
+            INSERT INTO kanban_pull_requests(card_id,source_repository_path,relative_path,base_branch,head_branch,provider,host,project_id,project_path,pull_request_number,publication_status)
+                VALUES('remote','/gl','gl','main','card','gitlab','code.example:8443',42,'team/sub/project',9,'draft');").execute(&mut db).await.unwrap();
+        for state in ["draft", "ready", "closed", "failed", "queued", "publishing"] {
+            sqlx::query(
+                "UPDATE kanban_pull_requests SET publication_status=?1 WHERE provider='gitlab'",
+            )
+            .bind(state)
+            .execute(&mut db)
+            .await
+            .unwrap();
+            assert!(
+                crate::reviews::merged_card_ids(&mut db)
+                    .await
+                    .unwrap()
+                    .is_empty(),
+                "{state}"
+            );
+        }
+        for state in ["merged", "nothing_to_publish"] {
+            sqlx::query(
+                "UPDATE kanban_pull_requests SET publication_status=?1 WHERE provider='gitlab'",
+            )
+            .bind(state)
+            .execute(&mut db)
+            .await
+            .unwrap();
+            assert_eq!(
+                crate::reviews::merged_card_ids(&mut db).await.unwrap(),
+                vec!["remote"]
+            );
+        }
+        assert!(sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut db)
+            .await
+            .unwrap()
+            .is_empty());
+        sqlx::query("DELETE FROM kanban_cards WHERE id='remote'")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kanban_pull_requests")
+                .fetch_one(&mut db)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM kanban_card_repository_selections")
+                .fetch_one(&mut db)
+                .await
+                .unwrap(),
+            0
+        );
+    });
 }

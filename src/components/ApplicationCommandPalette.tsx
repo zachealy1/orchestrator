@@ -2,9 +2,12 @@ import {
   BarChart3,
   Bug,
   CircleStop,
+  Clock3,
   Columns3,
   Command,
+  Files,
   Keyboard,
+  MessageCircle,
   MessageSquare,
   Puzzle,
   Search,
@@ -253,6 +256,12 @@ function CommandIcon({ commandId }: { commandId: ApplicationCommandId }) {
       return <SquarePen size={17} />;
     case "command-palette":
       return <Command size={17} />;
+    case "sidebar-chats":
+      return <MessageCircle size={17} />;
+    case "sidebar-files":
+      return <Files size={17} />;
+    case "sidebar-priority":
+      return <Clock3 size={17} />;
     case "open-chat":
       return <MessageSquare size={17} />;
     case "open-kanban":

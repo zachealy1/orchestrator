@@ -1,5 +1,6 @@
+import { reviewRequestNoun } from "../reviews/api";
 import type { CodexAccessMode } from "../codex/types";
-import type { KanbanPullRequestRecord } from "../github/api";
+import type { KanbanPullRequestRecord } from "../reviews/api";
 
 export const KANBAN_STAGES = [
   "todo",
@@ -61,7 +62,7 @@ export type KanbanCard = {
   sortPosition: number;
   executionState: KanbanExecutionState;
   reviewState: KanbanReviewState;
-  reviewChannel?: "github" | "local" | null;
+  reviewChannel?: "github" | "gitlab" | "mixed" | "local" | null;
   currentAttemptId: string | null;
   stateVersion: number;
   archivedAt: string | null;
@@ -326,11 +327,11 @@ export function deriveCardCapabilities(
     merge: capability(false, "Use the card review workflow."),
     request_changes: capability(
       false,
-      "Request changes on GitHub.",
+      `Request changes on the ${reviewRequestNoun(card.reviewChannel)}.`,
     ),
     approve_result: capability(
       false,
-      "Approve and merge the pull request on GitHub.",
+      `Approve and merge the ${reviewRequestNoun(card.reviewChannel)} with your Git provider.`,
     ),
     reopen_review: capability(
       available &&
@@ -341,7 +342,7 @@ export function deriveCardCapabilities(
     ),
     open_pull_request: capability(
       available && hasPullRequest,
-      "This card does not have a pull request yet.",
+      `This card does not have a ${reviewRequestNoun(card.reviewChannel)} yet.`,
     ),
     retry_publication: capability(
       available && card.stage === "in_review" && publicationFailed,
@@ -351,14 +352,14 @@ export function deriveCardCapabilities(
       available &&
         card.stage === "in_review" &&
         card.executionState === "completed" &&
-        card.reviewChannel === "github" &&
+        ["github", "gitlab", "mixed"].includes(card.reviewChannel ?? "") &&
         publicationFailed &&
         !hasPullRequest,
-      "Only failed publications without a pull request can switch to local review.",
+      "Only failed publications without a review request can switch to local review.",
     ),
     complete_without_pr: capability(
       available && card.stage === "in_review" && nothingToPublish,
-      "Only cards with nothing to publish can be completed without a pull request.",
+      "Only cards with nothing to publish can be completed without a review request.",
       true,
     ),
     review_changes: capability(
@@ -444,7 +445,7 @@ export function deriveCardTransition(
     );
   }
   if (trigger === "approve_result") {
-    return transition(false, "none", false, "Merge the card pull request on GitHub to complete it.");
+    return transition(false, "none", false, `Merge the card ${reviewRequestNoun(card.reviewChannel)} with your Git provider to complete it.`);
   }
   if (trigger === "reopen_review") {
     return transition(

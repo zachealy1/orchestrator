@@ -1,3 +1,5 @@
+import { sidebarChats } from "./test/appRuntimeHarness";
+import { openSidebarChats } from "./test/appRuntimeHarness";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -891,21 +893,12 @@ describe("Application runtime scenarios 7", () => {
 
       const { user } = await renderApp();
       await startMockRun(user, "Wait for project input");
-      const workspaceNav = screen.getByRole("navigation", { name: "Workspaces" });
+      const workspaceNav = screen.getByRole("navigation", { name: "Chats" });
       await user.click(
         within(workspaceNav).getByRole("button", { name: "mobile-client" }),
       );
-      const otherWorkspaceBanner = screen.getByRole("region", {
-        name: "Selected folder",
-      });
-      await user.click(
-        within(otherWorkspaceBanner).getByRole("button", {
-          name: /open chat history/i,
-        }),
-      );
-      const drawer = await screen.findByRole("complementary", {
-        name: "Workspace chat history",
-      });
+      await openSidebarChats(user);
+      const drawer = sidebarChats();
 
       await emitCodexServerRequest({
         id: "cross-workspace-question",
@@ -962,7 +955,7 @@ describe("Application runtime scenarios 7", () => {
       await waitFor(() =>
         expect(within(banner).getByText("orchestrator")).toBeInTheDocument(),
       );
-      await waitFor(() => expect(drawer).toHaveClass("closed"));
+      expect(drawer).toBeVisible();
       const question = await screen.findByText(
         "Which framework should Codex use?",
       );

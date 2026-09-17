@@ -3,6 +3,9 @@ export type ShortcutPlatform = "mac" | "other";
 export type ApplicationCommandId =
   | "new-chat"
   | "command-palette"
+  | "sidebar-chats"
+  | "sidebar-files"
+  | "sidebar-priority"
   | "open-chat"
   | "open-kanban"
   | "open-analytics"
@@ -58,12 +61,30 @@ export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
     showInPalette: false,
   },
   {
-    id: "open-chat",
-    label: "Open Chat",
-    description: "Show the selected workspace chat",
+    id: "sidebar-chats",
+    label: "Sidebar: Chats",
+    description: "Show chats grouped by workspace in the sidebar",
     group: "Navigation",
-    keywords: ["chat", "task", "conversation"],
+    keywords: ["sidebar", "chats", "conversations", "history", "workspaces"],
     shortcut: shortcut("Digit1", "1", "1", "1"),
+    showInPalette: true,
+  },
+  {
+    id: "sidebar-files",
+    label: "Sidebar: Files",
+    description: "Show workspace files in the sidebar",
+    group: "Navigation",
+    keywords: ["sidebar", "files", "explorer", "folders", "workspaces"],
+    shortcut: shortcut("Digit2", "2", "2", "2"),
+    showInPalette: true,
+  },
+  {
+    id: "sidebar-priority",
+    label: "Sidebar: Priority",
+    description: "Show recently finished chats in the sidebar",
+    group: "Navigation",
+    keywords: ["sidebar", "priority", "recent", "finished", "completed"],
+    shortcut: shortcut("Digit3", "3", "3", "3"),
     showInPalette: true,
   },
   {
@@ -72,7 +93,16 @@ export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
     description: "Show the selected workspace board",
     group: "Navigation",
     keywords: ["kanban", "board", "cards"],
-    shortcut: shortcut("Digit2", "2", "2", "2"),
+    shortcut: shortcut("Digit4", "4", "4", "4"),
+    showInPalette: true,
+  },
+  {
+    id: "open-chat",
+    label: "Open Chat",
+    description: "Show the selected workspace chat",
+    group: "Navigation",
+    keywords: ["chat", "task", "conversation"],
+    shortcut: shortcut("Digit5", "5", "5", "5"),
     showInPalette: true,
   },
   {
@@ -81,7 +111,7 @@ export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
     description: "Show application analytics and usage limits",
     group: "Navigation",
     keywords: ["analytics", "usage", "limits", "metrics"],
-    shortcut: shortcut("Digit3", "3", "3", "3"),
+    shortcut: shortcut("Digit6", "6", "6", "6"),
     showInPalette: true,
   },
   {
@@ -90,7 +120,7 @@ export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
     description: "Browse installed and available plugins",
     group: "Navigation",
     keywords: ["plugins", "marketplace", "installed"],
-    shortcut: shortcut("Digit4", "4", "4", "4"),
+    shortcut: shortcut("Digit7", "7", "7", "7"),
     showInPalette: true,
   },
   {

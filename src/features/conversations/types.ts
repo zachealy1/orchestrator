@@ -214,6 +214,11 @@ export type ChatListItem = ChatRecord & {
   latest_model: string | null;
 };
 
+export type PriorityChatListItem = ChatListItem & {
+  latest_finished_at: string;
+  latest_finished_status: "completed" | "failed" | "cancelled";
+};
+
 export type ChatWithRuns = {
   chat: ChatListItem;
   runs: RunListItem[];

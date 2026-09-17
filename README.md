@@ -23,13 +23,13 @@
   <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
-> **Experimental community beta.** Version **0.2.0-beta.2** supports **Apple Silicon and Intel** with signed in-app updates. It is **ad-hoc signed and not notarized by Apple**. The maintainer reports manual testing; see the [release acceptance record](docs/release-acceptance.md) for scope.
+> **Experimental community beta.** Version **0.2.0-beta.3** supports **Apple Silicon and Intel** with signed in-app updates. It is **ad-hoc signed and not notarized by Apple**. See the [release acceptance record](docs/release-acceptance.md) for validation scope and limitations.
 
 Orchestrator is an independent project, not an OpenAI product. Browser, Computer Use and plugin integrations are experimental and may require separately installed upstream components.
 
 ## Download and install
 
-**[Download for Apple Silicon](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_aarch64.dmg)** · **[Download for Intel](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.2/Orchestrator_x86_64.dmg)** · [All releases](https://github.com/zachealy1/orchestrator/releases)
+**[Download for Apple Silicon](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.3/Orchestrator_aarch64.dmg)** · **[Download for Intel](https://github.com/zachealy1/orchestrator/releases/download/v0.2.0-beta.3/Orchestrator_x86_64.dmg)** · [All releases](https://github.com/zachealy1/orchestrator/releases)
 
 Requires an **Apple Silicon or Intel Mac running macOS 15 or later**. No development tools or source build are needed to install the app.
 
@@ -48,13 +48,13 @@ Start with a prompt, keep the conversation alongside your workspace, and follow 
 
 [![Taskboard Demo conversation showing the updated transcript, a readable Markdown table and the prompt composer.](docs/assets/screenshots/chat.png)](docs/assets/screenshots/chat.png)
 
-*Chat, Kanban and Subagents use the maintainer's full-screen captures from 12 September 2026, showing the beta.2 candidate and fictional Taskboard Demo at 3024 × 1898. Account identities are removed; task results and activity remain genuine. Click any screenshot to view it at full size.*
+*Chat, Files, Kanban, Subagents and Review use the maintainer's native macOS captures from 17 September 2026 and the fictional Taskboard Demo. Account details are removed; task results, diffs and activity are preserved. See the [capture notes](docs/assets/screenshots/README.md) for the source revision and demo-only presentation change. Click any screenshot to view it at full size.*
 
 ## Feature tour
 
 ### Inspect file contents
 
-Expand a workspace in the sidebar and select a file to read its contents beside your conversation. Syntax highlighting and line numbers make code and configuration easy to inspect without leaving the chat.
+Expand a workspace in the sidebar and select a file to read its contents beside your conversation or Kanban board. Syntax highlighting and line numbers make code and configuration easy to inspect without leaving the chat.
 
 [![Taskboard Demo's expanded workspace file tree and package.json contents in the side-by-side file preview.](docs/assets/screenshots/file-contents.png)](docs/assets/screenshots/file-contents.png)
 
@@ -64,7 +64,7 @@ Turn ideas into cards and follow each task from preparation through execution an
 
 [![Taskboard Demo Kanban board with the target-branch selector beside refresh and archive, and genuine backlog and review cards.](docs/assets/screenshots/kanban.png)](docs/assets/screenshots/kanban.png)
 
-*The target-branch selector sits immediately before refresh and archive. The existing demo cards retain their actual backlog and local-review states.*
+*The board shows the existing demo tasks: one to do, two awaiting local review and two completed. The target-branch selector sits before refresh and archive.*
 
 ### See what subagents are doing
 
@@ -127,11 +127,11 @@ A successful build does not establish public-release readiness. See the [contrib
 
 ## Installation and updates
 
-The **0.2.0-beta.2 community release targets Apple Silicon and Intel**. Use the [download instructions above](#download-and-install) for a first installation, including when moving from an existing `0.1.0` build.
+The **0.2.0-beta.3 community release targets Apple Silicon and Intel**. Use the [download instructions above](#download-and-install) for a first installation, including when moving from an existing `0.1.0` build.
 
 To update manually, back up important data, finish all tasks and repository operations, quit Orchestrator, then replace the Applications copy with the newer installer from [Releases](https://github.com/zachealy1/orchestrator/releases). See the [installation guide](docs/public/INSTALLATION.md) and [recovery guidance](docs/public/RECOVERY.md).
 
-The community release workflow publishes independently signed updater packages and advances the feed only after both architectures finish. No Apple account or paid update service is required. The maintainer reports manual testing of the changes. Packaging verifies integrity without a separate installer or update rehearsal. See the [release record](docs/release-acceptance.md).
+The community release workflow publishes independently signed updater packages and advances the feed only after both architectures finish. No Apple account or paid update service is required. Packaging verifies integrity; a clean-machine installation or two-version update rehearsal is not claimed for this release. See the [release record](docs/release-acceptance.md).
 
 ## Documentation and support
 
@@ -141,8 +141,33 @@ The community release workflow publishes independently signed updater packages a
 - [Report a bug](https://github.com/zachealy1/orchestrator/issues/new/choose) · [Report a vulnerability privately](SECURITY.md)
 - [Contribute](CONTRIBUTING.md) · [Architecture](docs/architecture-decomposition.md) · [Screenshot capture notes](docs/assets/screenshots/README.md)
 
-Orchestrator adds no application-user telemetry. Download reports use GitHub's aggregate asset counters: **downloads are not users or successful installations**. AI tasks and connected integrations still communicate with their providers; see the privacy guide before sharing sensitive work.
+Production releases share minimal daily installation activity with PostHog by default. You can disable this in **Settings → Privacy → Share installation activity**; see the [privacy guide](docs/public/PRIVACY.md) for the exact data collected. Download reports use GitHub's aggregate asset counters: **downloads are not users or successful installations**. AI tasks and connected integrations still communicate with their providers; see the privacy guide before sharing sensitive work.
 
 ## Licence
 
 Orchestrator's original source is [MIT licensed](LICENSE), copyright Zac Healy. Dependencies, bundled runtimes and third-party assets retain their own licences and notices. Packaging generates a third-party inventory; it does not relicense those components. `package.json` remains `private: true` to prevent accidental npm publication.
+
+### GitLab reviews
+
+Connect GitLab from **Settings → Connections → GitLab**. GitLab.com supports browser
+sign-in or a personal access token; self-managed hosts use a personal access token
+with the `api` scope. Multiple hosts can be connected at once, with one account per
+host. Credentials use macOS Keychain; CLI configuration is kept in Orchestrator's
+app data directory. Disconnecting a host leaves its saved card review links intact.
+
+When a card finishes, Orchestrator checks each repository's `origin`. If all
+repositories have connected GitHub or GitLab destinations, it publishes draft review
+requests, including mixed-provider cards. Otherwise it uses local review and explains
+which connection is missing. You can publish from local review before local merging
+starts. GitLab requests display `!number`; cards move to Done after all requests
+merge or have nothing to publish. Closed, unmerged requests stay in review.
+
+Self-managed instances require HTTPS with normal certificate verification. Custom
+HTTPS ports, SSH origins, and nested groups are supported. Pushes use the connected
+account over HTTPS. Custom SSH hostname aliases, GitLab subpath installations,
+fork-based requests, pipelines, and merging through the app are outside this integration.
+
+For development, `npm run prepare:gitlab-cli-runtime` installs the pinned GitLab CLI
+runtime for the current Mac architecture, and `npm run test:gitlab-cli-runtime` checks
+its version, integrity, and configuration isolation. Native runtime preparation and
+release validation include GitLab automatically.

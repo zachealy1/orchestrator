@@ -1,6 +1,6 @@
 [package]
 name = "orchestrator"
-version = "0.2.0-beta.2"
+version = "0.2.0-beta.3"
 description = "A token-aware desktop client for AI coding agents."
 authors = ["zachealy"]
 license = "MIT"
@@ -42,6 +42,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+url = "2"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -60,8 +61,10 @@ serde_json = "1"
 specta = { version = "=2.0.0-rc.25", features = ["derive", "serde_json"] }
 specta-typescript = "=0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
-tokio = { version = "1", features = ["net", "sync", "time"] }
+tokio = { version = "1", features = ["net", "sync", "time", "macros"] }
 uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 sha2 = "0.10"
 flate2 = "1"
 tar = "0.4"

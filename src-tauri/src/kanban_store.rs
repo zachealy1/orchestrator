@@ -80,7 +80,7 @@ pub struct KanbanCardDto {
     pub created_at: String,
     pub updated_at: String,
     pub repositories: Vec<KanbanRepositorySelectionDto>,
-    pub pull_requests: Vec<crate::github::KanbanPullRequestDto>,
+    pub pull_requests: Vec<crate::reviews::KanbanPullRequestDto>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -108,6 +108,9 @@ pub struct KanbanLocalReviewDto {
     pub summary: Option<String>,
     pub review_channel: String,
     pub can_publish_github: bool,
+    pub can_publish_remote: bool,
+    pub publication_destination: Option<String>,
+    pub publication_blocker: Option<String>,
     pub repositories: Vec<KanbanLocalReviewRepositoryDto>,
 }
 
@@ -807,14 +810,14 @@ async fn load_card(
     .map_err(|error| format!("The Kanban card could not be loaded: {error}"))?
     .ok_or_else(|| "The Kanban card no longer exists.".to_string())?;
     let repositories = load_repositories(connection, card_id).await?;
-    let pull_requests = crate::github::load_card_pull_requests(connection, card_id).await?;
+    let pull_requests = crate::reviews::load_card_pull_requests(connection, card_id).await?;
     Ok(card_dto_from_row(row, repositories, pull_requests))
 }
 
 fn card_dto_from_row(
     row: SqliteRow,
     repositories: Vec<KanbanRepositorySelectionDto>,
-    pull_requests: Vec<crate::github::KanbanPullRequestDto>,
+    pull_requests: Vec<crate::reviews::KanbanPullRequestDto>,
 ) -> KanbanCardDto {
     KanbanCardDto {
         id: row.get("id"),
@@ -912,7 +915,7 @@ async fn load_workspace_cards(
                 requests.pull_request_number, requests.pull_request_url,
                 requests.base_branch, requests.head_branch, requests.draft,
                 requests.pull_request_state, requests.publication_status,
-                requests.last_error, requests.updated_at
+                requests.last_error, requests.updated_at, requests.provider, requests.host, requests.project_id, requests.project_path
          FROM kanban_pull_requests requests
          JOIN kanban_cards cards ON cards.id = requests.card_id
          WHERE cards.workspace_id = ?1 AND cards.deleted_at IS NULL
@@ -924,13 +927,14 @@ async fn load_workspace_cards(
     .fetch_all(&mut *connection)
     .await
     .map_err(|error| format!("Pull request state could not be loaded: {error}"))?;
-    let mut pull_requests_by_card: HashMap<String, Vec<crate::github::KanbanPullRequestDto>> =
+    let mut pull_requests_by_card: HashMap<String, Vec<crate::reviews::KanbanPullRequestDto>> =
         HashMap::new();
     for row in pull_request_rows {
         pull_requests_by_card
             .entry(row.get("card_id"))
             .or_default()
-            .push(crate::github::KanbanPullRequestDto {
+            .push(crate::reviews::KanbanPullRequestDto {
+                provider: row.get("provider"), host: row.get("host"), project_id: row.get("project_id"), project_path: row.get("project_path"),
                 source_repository_path: row.get("source_repository_path"),
                 relative_path: row.get("relative_path"),
                 owner: row.get("owner"),
@@ -1658,6 +1662,36 @@ async fn rebalance_stage_positions(
     Ok(())
 }
 
+async fn append_card_to_review(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workspace_id: i64,
+    card_id: &str,
+) -> Result<(), String> {
+    let mut positions =
+        ordered_stage_positions(transaction, workspace_id, "in_review", card_id).await?;
+    let next_position = |positions: &[(String, i64)]| {
+        positions
+            .last()
+            .map(|(_, position)| *position)
+            .unwrap_or(0)
+            .checked_add(POSITION_STEP)
+    };
+    if next_position(&positions).is_none() {
+        rebalance_stage_positions(transaction, workspace_id, "in_review").await?;
+        positions =
+            ordered_stage_positions(transaction, workspace_id, "in_review", card_id).await?;
+    }
+    let position = next_position(&positions)
+        .ok_or_else(|| "The card position could not be allocated.".to_string())?;
+    sqlx::query("UPDATE kanban_cards SET sort_position = ?1 WHERE id = ?2")
+        .bind(position)
+        .bind(card_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| format!("The completed card could not be positioned: {error}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn kanban_move_card(
@@ -2176,9 +2210,9 @@ pub async fn kanban_update_attempt(
         "completed" | "failed" | "stopped" | "interrupted"
     );
     let request_fingerprint = operation_fingerprint(&request)?;
-    let github_review_available = review_ready
-        && !requested_plan_completion
-        && crate::github::github_review_available(&app).await;
+    let remote_destination = if review_ready && !requested_plan_completion {
+        crate::review_provider::card_destination(&app, &request.card_id).await.ok()
+    } else { None };
     let mut transaction = connection
         .begin()
         .await
@@ -2250,11 +2284,7 @@ pub async fn kanban_update_attempt(
         return Err("A stale card attempt tried to update this card.".to_string());
     }
     let review_channel = if review_ready && !requested_plan_completion {
-        Some(if github_review_available {
-            "github"
-        } else {
-            "local"
-        })
+        Some(remote_destination.as_deref().unwrap_or("local"))
     } else {
         None
     };
@@ -2287,6 +2317,11 @@ pub async fn kanban_update_attempt(
     if card.rows_affected() != 1 {
         transaction.rollback().await.ok();
         return Err("A stale card attempt was ignored.".to_string());
+    }
+    if review_ready {
+        // Allocate only after accepting this attempt's completion. Replayed or
+        // stale events must not overwrite a subsequent manual card move.
+        append_card_to_review(&mut transaction, workspace_id, &request.card_id).await?;
     }
     if let Some(plan) = request.completed_plan.as_ref() {
         let run_id = request
@@ -2364,13 +2399,13 @@ pub async fn kanban_update_attempt(
         .map_err(|error| format!("The card attempt could not be saved: {error}"))?;
     if request.status == "completed"
         && !plan_completion
-        && review_channel == Some("github")
+        && matches!(review_channel, Some("github" | "gitlab" | "mixed"))
         && !publication_deferred
     {
         let app_for_publication = app.clone();
         let card_id = request.card_id.clone();
         tauri::async_runtime::spawn(async move {
-            let _ = crate::github::enqueue_card_publication(app_for_publication, card_id).await;
+            let _ = crate::reviews::enqueue_card_publication(app_for_publication, card_id).await;
         });
     }
     Ok(ClaimKanbanAttemptResult {
@@ -3250,8 +3285,6 @@ async fn local_review_projection(
     let mut connection = open_database(app).await?;
     let card = sqlx::query(
         "SELECT card.title, card.description, card.chat_id, card.review_channel,
-                EXISTS(SELECT 1 FROM github_connections
-                       WHERE id = 1 AND status = 'connected') AS github_connected,
                 EXISTS(SELECT 1 FROM kanban_pull_requests
                        WHERE card_id = card.id AND pull_request_number IS NOT NULL) AS has_pr,
                 EXISTS(SELECT 1 FROM kanban_local_reviews
@@ -3269,7 +3302,7 @@ async fn local_review_projection(
     let objective: String = card.get("description");
     let chat_id: i64 = card.get("chat_id");
     let review_channel: Option<String> = card.get("review_channel");
-    let github_connected = card.get::<i64, _>("github_connected") != 0;
+    let destination = crate::review_provider::card_destination(app, card_id).await;
     let has_pr = card.get::<i64, _>("has_pr") != 0;
     let local_started = card.get::<i64, _>("local_started") != 0;
     let summary: Option<String> = sqlx::query_scalar(
@@ -3380,7 +3413,10 @@ async fn local_review_projection(
         objective,
         summary,
         review_channel: review_channel.unwrap_or_else(|| "local".to_string()),
-        can_publish_github: github_connected && !has_pr && !local_started,
+        can_publish_github: destination.as_deref() == Ok("github") && !has_pr && !local_started,
+        can_publish_remote: destination.is_ok() && !has_pr && !local_started,
+        publication_destination: destination.as_ref().ok().cloned(),
+        publication_blocker: destination.err(),
         repositories,
     })
 }
@@ -3402,6 +3438,8 @@ pub async fn kanban_use_local_review(
     card_id: String,
 ) -> Result<KanbanLocalReviewDto, String> {
     validate_identifier(&card_id, "card")?;
+    let review_lock = crate::reviews::card_review_lock(&app, &card_id);
+    let _review_guard = review_lock.lock().await;
     let mut connection = open_database(&app).await?;
     let actual_pull_requests: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM kanban_pull_requests
@@ -3413,7 +3451,7 @@ pub async fn kanban_use_local_review(
     .map_err(|error| format!("Pull request state could not be checked: {error}"))?;
     if actual_pull_requests > 0 {
         return Err(
-            "This card already has a GitHub pull request and must remain in GitHub review."
+            "This card already has review requests and must remain in remote review."
                 .to_string(),
         );
     }
@@ -3447,13 +3485,13 @@ pub async fn kanban_use_local_review(
     if review_channel.as_deref() != Some("local") {
         if pending_publications > 0 {
             return Err(
-                "GitHub publication is still running. Wait for it to finish before switching to local review."
+                "Remote publication is still running. Wait for it to finish before switching to local review."
                     .to_string(),
             );
         }
-        if failed_publications == 0 && crate::github::github_review_available(&app).await {
+        if failed_publications == 0 && crate::review_provider::card_destination(&app, &card_id).await.is_ok() {
             return Err(
-                "Local review is available after GitHub publication fails or while GitHub is disconnected."
+                "Local review is available after remote publication fails or while a provider is disconnected."
                     .to_string(),
             );
         }
@@ -3779,6 +3817,10 @@ pub async fn kanban_complete_local_review_without_changes(
     card_id: String,
 ) -> Result<KanbanCardDto, String> {
     validate_identifier(&card_id, "card")?;
+    let review_lock = crate::reviews::card_review_lock(&app, &card_id);
+    let _review_guard = review_lock.lock().await;
+    let review_lock = crate::reviews::card_review_lock(&app, &card_id);
+    let _review_guard = review_lock.lock().await;
     let projection = local_review_projection(&app, &card_id).await?;
     if projection.repositories.is_empty()
         || projection
@@ -3971,6 +4013,181 @@ pub async fn kanban_recover_interrupted(app: AppHandle) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn review_order_database() -> SqliteConnection {
+        let mut connection = SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open review order database");
+        sqlx::query(
+            "CREATE TABLE kanban_cards (
+                id TEXT PRIMARY KEY,
+                workspace_id INTEGER NOT NULL DEFAULT 1,
+                stage TEXT NOT NULL DEFAULT 'in_review',
+                sort_position INTEGER NOT NULL,
+                archived_at TEXT,
+                deleted_at TEXT
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("create review cards table");
+        connection
+    }
+
+    async fn review_order(connection: &mut SqliteConnection) -> Vec<(String, i64)> {
+        sqlx::query_as(
+            "SELECT id, sort_position FROM kanban_cards
+             WHERE workspace_id = 1 AND stage = 'in_review'
+               AND archived_at IS NULL AND deleted_at IS NULL
+             ORDER BY sort_position, id",
+        )
+        .fetch_all(connection)
+        .await
+        .expect("load persisted review order")
+    }
+
+    #[test]
+    fn review_completions_append_in_acceptance_order_and_allow_manual_overrides() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = review_order_database().await;
+            sqlx::query(
+                "INSERT INTO kanban_cards (id, sort_position, stage) VALUES
+                    ('existing-b', 1024, 'in_review'),
+                    ('existing-a', 2048, 'in_review'),
+                    ('created-first', 1024, 'in_progress'),
+                    ('created-second', 2048, 'in_progress')",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed review and running cards");
+
+            // Finish in reverse creation order, as the attempt handler does.
+            for card_id in ["created-second", "created-first"] {
+                let mut transaction = connection.begin().await.expect("begin completion");
+                sqlx::query("UPDATE kanban_cards SET stage = 'in_review' WHERE id = ?1")
+                    .bind(card_id)
+                    .execute(&mut *transaction)
+                    .await
+                    .expect("enter review");
+                append_card_to_review(&mut transaction, 1, card_id)
+                    .await
+                    .expect("append completed card");
+                transaction.commit().await.expect("commit completion");
+            }
+            assert_eq!(
+                review_order(&mut connection).await,
+                vec![
+                    ("existing-b".into(), 1024),
+                    ("existing-a".into(), 2048),
+                    ("created-second".into(), 3072),
+                    ("created-first".into(), 4096),
+                ]
+            );
+
+            // A persisted drag override survives reloads and later completions.
+            sqlx::query("UPDATE kanban_cards SET sort_position = 0 WHERE id = 'created-first'")
+                .execute(&mut connection)
+                .await
+                .expect("persist manual reorder");
+            assert_eq!(review_order(&mut connection).await[0].0, "created-first");
+
+            // A subsequent run on a previously reviewed card returns it to the bottom.
+            let mut transaction = connection
+                .begin()
+                .await
+                .expect("begin subsequent completion");
+            append_card_to_review(&mut transaction, 1, "existing-b")
+                .await
+                .expect("append subsequent completion");
+            transaction
+                .commit()
+                .await
+                .expect("commit subsequent completion");
+            assert_eq!(
+                review_order(&mut connection).await,
+                vec![
+                    ("created-first".into(), 0),
+                    ("existing-a".into(), 2048),
+                    ("created-second".into(), 3072),
+                    ("existing-b".into(), 4096),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn review_append_ignores_other_workspaces_hidden_cards_and_itself() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = review_order_database().await;
+            sqlx::query(
+                "INSERT INTO kanban_cards (
+                    id, workspace_id, stage, sort_position, archived_at, deleted_at
+                 ) VALUES
+                    ('completing', 1, 'in_review', 8192, NULL, NULL),
+                    ('other-workspace', 2, 'in_review', 16384, NULL, NULL),
+                    ('other-stage', 1, 'done', 16384, NULL, NULL),
+                    ('archived', 1, 'in_review', 16384, CURRENT_TIMESTAMP, NULL),
+                    ('deleted', 1, 'in_review', 16384, NULL, CURRENT_TIMESTAMP)",
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed excluded cards");
+            let mut transaction = connection.begin().await.expect("begin completion");
+            append_card_to_review(&mut transaction, 1, "completing")
+                .await
+                .expect("append to otherwise empty review column");
+            transaction.commit().await.expect("commit completion");
+            assert_eq!(
+                review_order(&mut connection).await,
+                vec![("completing".into(), POSITION_STEP)]
+            );
+            let unchanged: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM kanban_cards WHERE id != 'completing' AND sort_position = 16384",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("check excluded positions");
+            assert_eq!(unchanged, 4);
+        });
+    }
+
+    #[test]
+    fn review_append_rebalances_overflow_in_order_and_rolls_back_atomically() {
+        tauri::async_runtime::block_on(async {
+            let mut connection = review_order_database().await;
+            sqlx::query(
+                "INSERT INTO kanban_cards (id, sort_position) VALUES
+                    ('existing-z', ?1), ('existing-a', ?2), ('completing', 0)",
+            )
+            .bind(i64::MAX - POSITION_STEP)
+            .bind(i64::MAX)
+            .execute(&mut connection)
+            .await
+            .expect("seed overflowing positions");
+            let original = review_order(&mut connection).await;
+            let mut transaction = connection
+                .begin()
+                .await
+                .expect("begin rolled back completion");
+            append_card_to_review(&mut transaction, 1, "completing")
+                .await
+                .expect("rebalance and append");
+            transaction.rollback().await.expect("roll back completion");
+            assert_eq!(review_order(&mut connection).await, original);
+
+            let mut transaction = connection.begin().await.expect("begin accepted completion");
+            append_card_to_review(&mut transaction, 1, "completing")
+                .await
+                .expect("rebalance and append");
+            transaction.commit().await.expect("commit completion");
+            let cards = review_order(&mut connection).await;
+            assert_eq!(
+                cards.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+                vec!["existing-z", "existing-a", "completing"]
+            );
+            assert_eq!(cards[2].1, cards[1].1 + POSITION_STEP);
+        });
+    }
 
     #[test]
     fn accepted_plan_requires_valid_implementation_settings() {

@@ -7,6 +7,10 @@ pub(crate) struct DatabaseState {
 }
 
 impl DatabaseState {
+    pub(crate) fn pool(&self) -> &SqlitePool { &self.pool }
+    #[cfg(test)]
+    pub(crate) fn from_test_pool(pool: SqlitePool) -> Self { Self { pool } }
+
     pub(crate) async fn connect(app: &AppHandle) -> Result<Self, String> {
         let database_path = app
             .path()
@@ -415,7 +419,7 @@ pub(crate) async fn codex_persisted_run_activity(
          FROM run_events
          WHERE run_id = ?1
            AND sequence < ?2
-           AND method IN ('item/started', 'item/completed')
+           AND method IN ('item/started', 'item/completed', 'item/fileChange/patchUpdated', 'item/mcpToolCall/progress', 'hook/started', 'hook/completed', 'item/autoApprovalReview/started', 'item/autoApprovalReview/completed', 'warning', 'guardianWarning', 'configWarning', 'deprecationNotice', 'autoApprovalReview/strictReviewRequired', 'model/rerouted', 'thread/compacted', 'turn/plan/updated')
          ORDER BY sequence DESC
          LIMIT ?3",
     )
@@ -427,6 +431,7 @@ pub(crate) async fn codex_persisted_run_activity(
     .map_err(|_| "Historical run activity could not be loaded.".to_string())?;
 
     let mut items = Vec::new();
+    let mut stream_events = Vec::new();
     let mut oldest_sequence = None;
     for row in &rows {
         let sequence = row
@@ -441,6 +446,19 @@ pub(crate) async fn codex_persisted_run_activity(
             .map_err(|_| "Historical run activity is invalid.".to_string())?;
         let payload: Value = serde_json::from_str(&payload_json)
             .map_err(|_| "Historical run activity is invalid.".to_string())?;
+        let mut projected_event = payload.clone();
+        if let Some(params) = projected_event.get_mut("params").and_then(Value::as_object_mut) {
+            params.insert("sequence".into(), Value::from(sequence));
+            let redacted = params.get("redacted").and_then(Value::as_bool) == Some(true);
+            if let Some(item) = params.get_mut("item") {
+                *item = crate::stream_projection::item_summary(item);
+                if redacted { item["detailsAvailable"] = Value::Bool(false); item["detailsDeferred"] = Value::Bool(false); }
+            }
+            if let Some(changes) = params.get_mut("changes").and_then(Value::as_array_mut) {
+                for change in changes { if let Some(change) = change.as_object_mut() { change.remove("diff"); } }
+            }
+        }
+        stream_events.push(projected_event);
         let Some(mut item) = payload
             .get("params")
             .and_then(|params| params.get("item"))
@@ -470,6 +488,9 @@ pub(crate) async fn codex_persisted_run_activity(
                 item_object.insert("durationMs".to_string(), duration);
             }
         }
+        if let Some(thread_id) = payload.pointer("/params/threadId") {
+            item_object.insert("threadId".to_string(), thread_id.clone());
+        }
         item_object.insert("sequence".to_string(), Value::from(sequence));
         items.push(item);
     }
@@ -479,7 +500,10 @@ pub(crate) async fn codex_persisted_run_activity(
         "data": items,
         "nextCursor": has_more.then(|| oldest_sequence.map(|sequence| sequence.to_string())).flatten()
     });
-    Ok(project_historical_turn_activity(&response))
+    let mut projected = project_historical_turn_activity(&response);
+    stream_events.reverse();
+    projected.events = stream_events;
+    Ok(projected)
 }
 
 fn require_one_row(rows_affected: u64, message: &str) -> Result<(), String> {

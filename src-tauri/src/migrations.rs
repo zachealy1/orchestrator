@@ -291,6 +291,24 @@ pub(crate) const MIGRATION_DEFINITIONS: &[MigrationDefinition] = &[
         sql: include_str!("../migrations/047_allow_failed_queued_run_retries.sql"),
         checksum: 0x32e05fdb1194cc90,
     },
+    MigrationDefinition {
+        version: 48,
+        description: "repair_restarted_token_counters",
+        sql: include_str!("../migrations/048_repair_restarted_token_counters.sql"),
+        checksum: 0x74f970efb5f93aa5,
+    },
+    MigrationDefinition {
+        version: 49,
+        description: "installation_activity",
+        sql: include_str!("../migrations/049_installation_activity.sql"),
+        checksum: 0xf045159cdf767241,
+    },
+    MigrationDefinition {
+        version: 50,
+        description: "add_gitlab_review",
+        sql: include_str!("../migrations/050_add_gitlab_review.sql"),
+        checksum: 0x7468bb8435675213,
+    },
 ];
 
 pub(crate) fn migration_sql(definition: &MigrationDefinition) -> &'static str {

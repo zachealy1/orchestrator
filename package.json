@@ -2,7 +2,7 @@
   "name": "orchestrator",
   "private": true,
   "license": "MIT",
-  "version": "0.2.0-beta.2",
+  "version": "0.2.0-beta.3",
   "description": "A Tauri 2, React, TypeScript, and SQLite desktop app.",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "check:architecture": "node scripts/check-architecture.mjs",
     "lint": "tsc --noEmit && npm run check:architecture && npm run check:bindings",
     "build:tauri": "npm run prepare:native-runtimes && node scripts/release/third-party-notices.mjs && npm run build",
-    "prepare:native-runtimes": "npm run prepare:github-cli-runtime && npm run prepare:codex-engine",
+    "prepare:native-runtimes": "npm run prepare:github-cli-runtime && npm run prepare:gitlab-cli-runtime && npm run prepare:codex-engine",
     "prepare:codex-engine": "node scripts/prepare-codex-engine.mjs",
     "prepare:github-cli-runtime": "node scripts/prepare-github-cli-runtime.mjs",
     "test": "vitest run",
@@ -25,12 +25,18 @@
     "test:live-plan": "RUN_CODEX_LIVE_PLAN_TEST=1 node scripts/live-native-plan-mode.mjs",
     "test:watch": "vitest",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "prepare:gitlab-cli-runtime": "node scripts/prepare-gitlab-cli-runtime.mjs",
+    "test:gitlab-cli-runtime": "npm run prepare:gitlab-cli-runtime && node scripts/test-gitlab-cli-runtime.mjs",
+    "demo:gitlab": "vite --host 127.0.0.1 --port 1425 --strictPort",
+    "test:live-async-questions": "RUN_CODEX_LIVE_ASYNC_QUESTIONS_TEST=1 node scripts/live-native-async-questions.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@tanstack/react-virtual": "^3.14.4",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
@@ -49,7 +55,8 @@
     "remark-rehype": "^11.1.2",
     "shiki": "^4.3.0",
     "unified": "^11.0.5",
-    "unist-util-visit": "^5.1.0"
+    "unist-util-visit": "^5.1.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
