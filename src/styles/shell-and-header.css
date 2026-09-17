@@ -1817,4 +1817,34 @@ button.account-switcher-item:hover:not(:disabled) {
   outline: 2px solid rgb(var(--primary-rgb) / 0.6);
   outline-offset: -2px;
 }
-.sidebar-load-more { margin: 4px 8px; padding: 6px; font-size: 0.75rem; }
+.sidebar-load-more {
+  justify-content: flex-start;
+  min-height: 25px;
+  margin: 4px 0;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  box-shadow: none;
+  text-align: left;
+  font-size: 0.75rem;
+}
+.sidebar-load-more:hover:not(:disabled),
+.sidebar-load-more:focus-visible {
+  background: rgb(var(--surface-muted-rgb) / 0.18);
+  transform: none;
+}
+.sidebar-load-more:focus-visible {
+  outline: 2px solid rgb(var(--primary-rgb) / 0.6);
+  outline-offset: -2px;
+}
+
+.sidebar-priority-group { display: grid; min-width: 0; gap: 2px; }
+.sidebar-priority-group + .sidebar-priority-group { margin-top: 10px; }
+.sidebar-priority-heading {
+  margin: 6px 8px 4px;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 560;
+}

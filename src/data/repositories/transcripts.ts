@@ -3,6 +3,7 @@ import type { ChatListItem, PriorityChatListItem, ChatWithRuns, ExternalTranscri
 import type { RunListItem } from "../../features/runs/types";
 import { isSubagentLifecycleStatus, type SubagentInstruction, type SubagentInstructionKind, type SubagentLifecycleStatus, type SubagentRecord } from "../../lib/subagents";
 import { FrontendDatabase } from "../database";
+import { PRIORITY_WINDOW_MS } from "../../shared/priorityHistory";
 
 export function createTranscriptRepository(database: FrontendDatabase) {
   const getDatabase = () => database.get();
@@ -115,12 +116,12 @@ export function createTranscriptRepository(database: FrontendDatabase) {
     return queryChatList<PriorityChatListItem>(
       `EXISTS (SELECT 1 FROM workspaces WHERE workspaces.id = chats.workspace_id AND workspaces.deleted_at IS NULL)
        AND finished.position = 1
-       AND julianday(finished.completed_at) > julianday($1) - 1
+       AND julianday(finished.completed_at) > julianday($2)
        AND julianday(finished.completed_at) <= julianday($1)
        AND NOT EXISTS (SELECT 1 FROM activity active
          WHERE active.chat_id = chats.id
            AND active.status IN ('starting', 'connecting', 'running', 'inProgress', 'in_progress'))`,
-      [now],
+      [now, new Date(Date.parse(now) - PRIORITY_WINDOW_MS).toISOString()],
       "ORDER BY julianday(finished.completed_at) DESC, chats.id DESC",
       `WITH activity AS (
          SELECT chat_id, id AS sequence, status, completed_at

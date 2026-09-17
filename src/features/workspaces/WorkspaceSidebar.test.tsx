@@ -48,7 +48,7 @@ function model(
   return {
     mode: "files",
     histories: {},
-    priority: { status: "loaded", chats: [], error: null },
+    priority: { status: "loaded", chats: [], error: null, now: Date.now() },
     selectedChatId: null,
     runningChatActivity: new Map(),
     unreadChats: {},
@@ -155,14 +155,14 @@ describe("sidebar modes", () => {
     expect(handlers.selectChat).toHaveBeenCalledWith(chat);
     fireEvent.keyDown(row, { key: "F10", shiftKey: true });
     expect(handlers.openChatContextMenu).toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     expect(handlers.loadChats).toHaveBeenCalledWith(workspace, true);
     fireEvent.click(screen.getByRole("button", { name: "Files" }));
     expect(handlers.setMode).toHaveBeenCalledWith("files");
     expect(handlers.openFile).not.toHaveBeenCalled();
   });
 
-  it("shows flat Priority metadata, retains read chats and hides live reruns", () => {
+  it("shows grouped Priority metadata, retains read chats and hides live reruns", () => {
     const chats = [101, 102].map((id) => ({
       ...workspaceChatFixture({ id, workspace_id: 1, title: `Chat ${id}` }),
       latest_finished_at: "2026-09-12T12:00:00Z",
@@ -172,15 +172,17 @@ describe("sidebar modes", () => {
       <WorkspaceSidebar
         model={model({
           mode: "priority",
-          priority: { status: "loaded", chats, error: null },
+          priority: { status: "loaded", chats, error: null, now: Date.parse("2026-09-12T12:00:00Z") },
           runningChatActivity: new Map([[102, "2026-09-12T12:01:00Z"]]),
         })}
         actions={actions()}
       />,
     );
-    const row = screen.getByRole("button", { name: "Chat 101" });
+    const row = screen.getByRole("button", { name: "app · Chat 101" });
     expect(row).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Chat 102" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Today" })).toBeVisible();
+    expect(within(row).getByText("app")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "app · Chat 102" })).not.toBeInTheDocument();
     expect(row).toHaveAccessibleDescription(
       `app · failed · ${new Date(chats[0].latest_finished_at).toLocaleString()}`,
     );
@@ -196,6 +198,50 @@ describe("sidebar modes", () => {
         "button",
       ),
     ).toHaveLength(3);
+  });
+
+  it("disables Show more while loading, retains rows on failure and hides it when exhausted", () => {
+    const handlers = actions();
+    const chat = workspaceChatFixture({ title: "Retained chat" });
+    const history = { status: "loading" as const, chats: [chat], error: null, hasMore: true };
+    const data = model({ mode: "chats", expandedWorkspaceIds: new Set([1]), histories: { 1: history } });
+    const { rerender } = render(<WorkspaceSidebar model={data} actions={handlers} />);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retained chat" })).toBeVisible();
+    rerender(<WorkspaceSidebar model={{ ...data, histories: { 1: { ...history, status: "error", error: "Offline" } } }} actions={handlers} />);
+    expect(screen.getByRole("button", { name: "Retained chat" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(handlers.loadChats).toHaveBeenCalledWith(workspace);
+    rerender(<WorkspaceSidebar model={{ ...data, histories: { 1: { ...history, status: "loaded", hasMore: false } } }} actions={handlers} />);
+    expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes duplicate titles by inline workspace and preserves full labels and row actions", () => {
+    const handlers = actions();
+    const longLabel = "A workspace with a deliberately long name";
+    const title = "A deliberately long shared conversation title";
+    const chats = [1, 2].map((id) => ({
+      ...workspaceChatFixture({ id, workspace_id: id, title }),
+      latest_finished_at: new Date(2026, 8, 17, 10).toISOString(),
+      latest_finished_status: "completed" as const,
+    }));
+    render(<WorkspaceSidebar model={model({
+      mode: "priority", selectedChatId: 2, unreadChats: { 2: [2] },
+      workspaces: [workspace, { ...workspace, id: 2, label: longLabel }],
+      priority: { status: "loaded", chats, error: null, now: new Date(2026, 8, 17, 12).getTime() },
+    })} actions={handlers} />);
+    expect(screen.getByRole("button", { name: `app · ${title}` })).toBeVisible();
+    const row = screen.getByRole("button", { name: `${longLabel} · ${title}, unread activity` });
+    expect(within(row).getByText(longLabel)).toBeVisible();
+    expect(row).toHaveAttribute("aria-pressed", "true");
+    expect(row.getAttribute("data-tooltip")).toContain(`${title} · ${longLabel}`);
+    expect(row.getAttribute("aria-description")).toContain(longLabel);
+    fireEvent.click(row);
+    expect(handlers.selectChat).toHaveBeenCalledWith(chats[1]);
+    fireEvent.keyDown(row, { key: "F10", shiftKey: true });
+    expect(handlers.openChatContextMenu).toHaveBeenCalledWith(chats[1], expect.anything());
+    fireEvent.contextMenu(row);
+    expect(handlers.openChatContextMenu).toHaveBeenCalledTimes(2);
   });
 
   it("restores each mode's scroll position and exposes retry actions", () => {

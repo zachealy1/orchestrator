@@ -64,7 +64,7 @@ export function SettingsDemo({ onOpenBoard, onNotice }: { onOpenBoard: () => voi
           <button type="button" onClick={explain}><Puzzle size={17} /><span>Plugins</span></button>
         </nav>
         <WorkspaceSidebar model={{
-          mode: sidebarMode, histories: {}, priority: { status: "loaded", chats: [], error: null },
+          mode: sidebarMode, histories: {}, priority: { status: "loaded", chats: [], error: null, now: Date.now() },
           selectedChatId: null, runningChatActivity: new Map(), unreadChats: {},
           workspaces: [workspace], selectedWorkspaceId: workspace.id, taskViewActive: false, runIsActive: false,
           expandedWorkspaceIds: new Set(), expandedDirectoryPaths: new Set(), directoryStates: {},
