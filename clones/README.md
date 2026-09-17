@@ -2,16 +2,16 @@
 
 Collection succeeded.
 
-Latest UTC date returned by GitHub: **2026-09-15**.
+Latest UTC date returned by GitHub: **2026-09-16**.
 
 
-Last attempt: 2026-09-16T19:25:51.796Z. Last successful collection: 2026-09-16T19:25:51.796Z.
+Last attempt: 2026-09-17T09:37:40.423Z. Last successful collection: 2026-09-17T09:37:40.423Z.
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
 ## Observed totals
 
-**740 observed clones** across the retained history. Missing days: **1**. Partial days: **0**.
+**937 observed clones** across the retained history. Missing days: **1**. Partial days: **0**.
 This total is incomplete: missing and partial days are not assumed to be zero.
 
 These are repository clone operations, not downloads, installations, unique people or active users. Daily unique cloners are not summed across dates. No cloner identities or application-user telemetry are collected. These aggregate reports are public.
@@ -23,13 +23,14 @@ Totals cover recorded days only, not necessarily an entire calendar month.
 | UTC month | Observed clones | Reported days | Missing days | Partial days |
 |---|---:|---:|---:|---:|
 | 2026-08 | 0 | 6 | 0 | 0 |
-| 2026-09 | 740 | 15 | 1 | 0 |
+| 2026-09 | 937 | 16 | 1 | 0 |
 
 ## Daily activity (latest 30 days)
 
 | UTC date | Clones | Unique cloners | Status |
 |---|---:|---:|---|
-| 2026-09-16 | — | — | gap |
+| 2026-09-17 | — | — | gap |
+| 2026-09-16 | 197 | 80 | reported |
 | 2026-09-15 | 27 | 12 | reported |
 | 2026-09-14 | 39 | 18 | reported |
 | 2026-09-13 | 66 | 34 | reported |
