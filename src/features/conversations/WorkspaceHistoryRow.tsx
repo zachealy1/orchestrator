@@ -14,9 +14,11 @@ export const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
   unread,
   onSelect,
   metadata,
+  workspaceLabel,
   onOpenContextMenu,
 }: {
   metadata?: string;
+  workspaceLabel?: string;
   chat: ChatListItem;
   selected: boolean;
   running: boolean;
@@ -27,14 +29,17 @@ export const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
     event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>,
   ) => void;
 }) {
-  const description = metadata ?? formatHistoryChatMeta(chat);
+  const description = [workspaceLabel, metadata ?? formatHistoryChatMeta(chat)]
+    .filter(Boolean)
+    .join(" · ");
+  const label = workspaceLabel ? `${workspaceLabel} · ${chat.title}` : chat.title;
 
   return (
     <button
       className={`history-run-item ${selected ? "selected" : ""}`}
       type="button"
       aria-pressed={selected}
-      aria-label={`${chat.title}${unread ? ", unread activity" : ""}${running ? ", agent running" : ""}`}
+      aria-label={`${label}${unread ? ", unread activity" : ""}${running ? ", agent running" : ""}`}
       aria-description={description}
       data-tooltip={`${chat.title} · ${description}`}
       onClick={() => onSelect(chat)}
@@ -49,7 +54,15 @@ export const WorkspaceHistoryRow = memo(function WorkspaceHistoryRow({
       }}
     >
       <span className="history-run-title-row">
-        <strong>{chat.title}</strong>
+        <span className="history-run-text">
+          {workspaceLabel ? (
+            <>
+              <span className="history-run-workspace">{workspaceLabel}</span>
+              <span className="history-run-separator" aria-hidden="true">·</span>
+            </>
+          ) : null}
+          <strong>{chat.title}</strong>
+        </span>
         {unread || running ? (
           <span
             className="history-run-indicators"
