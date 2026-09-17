@@ -40,6 +40,7 @@ import {
   formatApplicationCommandShortcut,
 } from "../shortcuts/applicationShortcuts";
 import type { SidebarMode } from "./sidebarPreferences";
+import { groupPriorityChats } from "./priorityHistory";
 import type {
   SidebarHistoryState,
   PriorityHistoryState,
@@ -130,7 +131,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     if (element) element.scrollTop = scrollPositions.current[model.mode];
   }, [model.mode]);
 
-  function renderChat(chat: ChatListItem, metadata?: string) {
+  function renderChat(
+    chat: ChatListItem,
+    metadata?: string,
+    workspaceLabel?: string,
+  ) {
     return (
       <WorkspaceHistoryRow
         key={chat.id}
@@ -141,6 +146,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         onSelect={actions.selectChat}
         onOpenContextMenu={actions.openChatContextMenu}
         metadata={metadata}
+        workspaceLabel={workspaceLabel}
       />
     );
   }
@@ -181,7 +187,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
             disabled={state.status === "loading"}
             onClick={() => actions.loadChats(workspace, true)}
           >
-            Load more
+            Show more
           </button>
         ) : null}
       </div>
@@ -209,15 +215,25 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
         ) : null}
         {model.priority.status === "loaded" && chats.length === 0 ? (
           <p className="workspace-tree-status">
-            No chats finished in the last 24 hours.
+            No chats finished in the last 7 days.
           </p>
         ) : null}
-        {chats.map((chat) =>
-          renderChat(
-            chat,
-            `${model.workspaces.find((workspace) => workspace.id === chat.workspace_id)?.label ?? ""} · ${chat.latest_finished_status} · ${new Date(chat.latest_finished_at).toLocaleString()}`,
-          ),
-        )}
+        {groupPriorityChats(chats, model.priority.now).map((group) => (
+          <section
+            className="sidebar-priority-group"
+            key={group.label}
+            aria-label={group.label}
+          >
+            <h3 className="sidebar-priority-heading">{group.label}</h3>
+            {group.chats.map((chat) =>
+              renderChat(
+                chat,
+                `${chat.latest_finished_status} · ${new Date(chat.latest_finished_at).toLocaleString()}`,
+                model.workspaces.find((workspace) => workspace.id === chat.workspace_id)?.label,
+              ),
+            )}
+          </section>
+        ))}
       </div>
     );
   }

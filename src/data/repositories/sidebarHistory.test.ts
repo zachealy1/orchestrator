@@ -108,13 +108,13 @@ describe("sidebar repository queries", () => {
         run(1, 1, "2026-09-12T10:00:00Z"),
         run(2, 1, "2026-09-12T11:00:00Z", { status: "failed" }),
         run(3, 2, "2026-09-12T11:00:00Z", { status: "interrupted" }),
-        run(4, 3, "2026-09-11T12:00:00Z"),
+        run(4, 3, "2026-09-05T12:00:00Z"),
         run(5, 4, "2026-09-12T12:00:01Z"),
         run(6, 5, null),
-        run(7, 6, "2026-09-11T11:59:59Z"),
+        run(7, 6, "2026-09-05T11:59:59Z"),
         run(8, 7, now),
         run(9, 8, now),
-        run(10, 9, "2026-09-11T12:00:00.001Z"),
+        run(10, 9, "2026-09-05T12:00:00.001Z"),
       ],
     });
     const rows = await repo.listPriorityChats(now);
