@@ -51,6 +51,8 @@ export class AppServices {
     string,
     HistoricalTurnActivityResponse
   >(200);
+  readonly activityDetails = new AsyncResourceCache<string, unknown>(100);
+  readonly activityDisclosures = new BoundedLruCache<string, boolean>(1000);
   readonly workspaceTaskMemories = new WorkspaceTaskMemoryStore();
   readonly codePreview = new CodePreviewCache();
   readonly codePreviewHighlighting = new CodePreviewHighlightingService({
@@ -111,6 +113,8 @@ export class AppServices {
     this.codexNotificationFrames.dispose();
     this.historicalTranscripts.clear();
     this.historicalActivities.clear();
+    this.activityDetails.clear();
+    this.activityDisclosures.clear();
     this.workspaceTaskMemories.clear();
     this.codePreviewHighlighting.dispose();
     this.codePreview.clear();
@@ -124,6 +128,7 @@ export class AppServices {
 }
 
 const AppServicesContext = createContext<AppServices | null>(null);
+export const useOptionalAppServices = () => useContext(AppServicesContext);
 
 export function AppServicesProvider({
   services,

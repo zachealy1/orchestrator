@@ -32,7 +32,8 @@ describe("high-speed transcript scrolling CSS", () => {
     const firstMessageChild = rule(".stream-message > :first-child");
     const lastMessageChild = rule(".stream-message > :last-child");
 
-    expect(timeline).toContain("gap: 18px");
+    expect(css).toContain("--stream-entry-gap: 18px");
+    expect(timeline).toContain("gap: var(--stream-entry-gap)");
     expect(firstMessageChild).toContain("margin-block-start: 0");
     expect(lastMessageChild).toContain("margin-block-end: 0");
   });

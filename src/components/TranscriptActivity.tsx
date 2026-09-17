@@ -1,7 +1,6 @@
 import {
   Activity,
   BrainCircuit,
-  ChevronDown,
   ChevronRight,
   Clock,
   CircleAlert,
@@ -15,6 +14,10 @@ import {
   Wrench,
 } from "lucide-react";
 import { memo, useState, useEffect, type ReactNode } from "react";
+import { StreamActivities } from "./StreamActivities";
+import { formatDuration } from "../lib/streamMetrics";
+import { useStreamHost } from "./StreamHost";
+import { standaloneActivity } from "../lib/streamActivity";
 import { StreamingMarkdown, StreamingText } from "./StreamingText";
 import type {
   RunCommandActivity,
@@ -75,11 +78,11 @@ export const CommandsGroup = memo(function CommandsGroup({
         <span className="activity-command-text">{command.command}</span>
         {command.durationMs !== null && command.durationMs >= 1000 ? (
           <span className="command-duration">
-            {formatDuration(command.durationMs)}
+            for {formatDuration(command.durationMs)}
           </span>
         ) : null}
         <ChevronRight
-          className="command-chevron"
+          className="command-chevron stream-disclosure-chevron"
           size={14}
           aria-hidden="true"
         />
@@ -133,7 +136,7 @@ export const CommandsGroup = memo(function CommandsGroup({
                   Ran {run.items.length}{" "}
                   {run.items.length === 1 ? "command" : "commands"}
                 </span>
-                <ChevronDown size={15} aria-hidden="true" />
+                <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
               </summary>
               <div className="run-activity-items">
                 {run.items.map(renderCommand)}
@@ -189,7 +192,7 @@ export const ToolActivitiesGroup = memo(function ToolActivitiesGroup({
                   run.items.length - completed.length,
                 )}
               </span>
-              <ChevronDown size={15} aria-hidden="true" />
+              <ChevronRight size={15} className="stream-disclosure-chevron" aria-hidden="true" />
             </summary>
             <div className="run-activity-items">
               {run.items.map((activity) => (
@@ -372,22 +375,6 @@ function streamEventIcon(kind: StreamActivityEvent["kind"]) {
   }
 }
 
-export function formatDuration(milliseconds: number) {
-  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}hr ${minutes}m ${seconds}s`;
-  }
-
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-
-  return `${seconds}s`;
-}
 
 function commandActionLabel(status: RunCommandActivity["status"]) {
   if (status === "failed") {
@@ -431,14 +418,14 @@ export function ActivityTimeline({
           className="stream-timeline-item"
           data-stream-enter={
             active &&
-            item.kind !== "commands" &&
+            item.kind !== "commands" && item.kind !== "activities" &&
             !initialIds.has(timelineItemId(item))
               ? ""
               : undefined
           }
         >
-          {item.kind === "steer" ? (
-            <div key={item.event.id}>{renderSteer?.(item.event)}</div>
+          {item.kind === "activities" ? <StreamActivities activities={item.activities} active={active} onOpen={onOpenTranscriptLink} /> : item.kind === "steer" ? (
+            <div key={item.event.id}>{renderSteer ? renderSteer(item.event) : <div className="submitted-prompt-stack"><article className="submitted-prompt">{item.event.text}</article></div>}</div>
           ) : item.kind === "commands" ? (
             <div
               className="run-activity-groups"
@@ -473,7 +460,7 @@ export function ActivityTimeline({
 }
 
 function timelineItemId(item: TimelineItem) {
-  return item.kind === "commands" || item.kind === "tools"
+  return item.kind === "commands" || item.kind === "tools" || item.kind === "activities"
     ? item.id
     : item.event.id;
 }
@@ -493,6 +480,10 @@ export function activityStatusLabel(status: string, elapsedMs: number) {
 
 export function attentionTimelineItems(items: TimelineItem[]): TimelineItem[] {
   return items.flatMap((item): TimelineItem[] => {
+    if (item.kind === "activities") {
+      const activities = item.activities.filter(a => a.status !== "completed" || standaloneActivity(a));
+      return activities.length ? [{ ...item, activities }] : [];
+    }
     if (item.kind === "commands") {
       const commands = item.commands.filter(
         (command) => command.status !== "completed",
@@ -514,6 +505,7 @@ export function ActivityDisclosure({
   label,
   metrics,
   ariaLabel = "Run trace",
+  disclosureKey = "trace",
   onExpand,
   attention,
   children,
@@ -522,12 +514,20 @@ export function ActivityDisclosure({
   label: string;
   metrics?: ReactNode;
   ariaLabel?: string;
+  disclosureKey?: string;
   onExpand?: () => void;
   attention?: ReactNode;
   children: ReactNode;
 }) {
-  const [choice, setChoice] = useState<boolean | null>(null);
-  const open = choice ?? active;
+  const host = useStreamHost();
+  const key = JSON.stringify([host?.profileKey, host?.threadId, host?.turnId, disclosureKey]);
+  const [choice, setChoice] = useState<{ key: string; open: boolean } | null>(null);
+  const open = (choice?.key === key ? choice.open : host?.disclosures?.get(key)) ?? active;
+  const choose = (value: boolean) => {
+    host?.disclosures?.set(key, value);
+    host?.notifyLayoutChange?.();
+    setChoice({ key, open: value });
+  };
   useEffect(() => {
     if (open) onExpand?.();
   }, [open, onExpand]);
@@ -536,9 +536,13 @@ export function ActivityDisclosure({
       <details
         className="stream-trace"
         open={open}
+        onClickCapture={(event) => {
+          const summary = (event.target as Element).closest("summary");
+          if (summary && summary !== event.currentTarget.querySelector(":scope > summary")) choose(true);
+        }}
         onToggle={(event) => {
           if (event.currentTarget.open !== open)
-            setChoice(event.currentTarget.open);
+            choose(event.currentTarget.open);
         }}
       >
         <summary
@@ -565,7 +569,7 @@ export function ActivityDisclosure({
             <span className="stream-secondary-metrics">{metrics}</span>
           ) : null}
           <ChevronRight
-            className="run-trace-chevron"
+            className="run-trace-chevron stream-disclosure-chevron"
             size={15}
             aria-hidden="true"
           />

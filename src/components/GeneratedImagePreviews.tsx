@@ -29,7 +29,7 @@ export const GeneratedImagePreviews = memo(function GeneratedImagePreviews({
   );
 });
 
-const GeneratedImagePreview = memo(function GeneratedImagePreview({
+export const GeneratedImagePreview = memo(function GeneratedImagePreview({
   image,
   index,
 }: {

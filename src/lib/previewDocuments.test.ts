@@ -1,12 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
   mergeThemeTokenLine,
+  diffDocumentIdentity,
+  prepareDiffDocument,
   preparePlaintextDiffDocument,
   preparePlaintextSourceDocument,
   splitSourceLines,
 } from "./previewDocuments";
+import { CodePreviewCache } from "./codePreview";
 
 describe("preview document preparation", () => {
+  it("renders recorded patches without using the current file snapshots", async () => {
+    const input = { path: "/repo/file.ts", sections: [{ id: "recorded", patchOnly: true,
+      baseContent: "current file", headContent: "current file", baseTruncated: false, headTruncated: false,
+      diffContent: "--- a/file.ts\n+++ b/file.ts\n@@ -40 +40 @@\n-old value\n+recorded value\n" }] };
+    const plain = preparePlaintextDiffDocument(input);
+    const prepared = await prepareDiffDocument(input, new CodePreviewCache());
+    expect(prepared.sections).toEqual(plain.sections);
+    expect(prepared.sections[0].rows).toEqual([expect.objectContaining({ kind: "changed", baseLineNumber: 40,
+      headLineNumber: 40, baseText: "old value", headText: "recorded value" })]);
+    expect(prepared.truncated).toBe(false);
+    expect(diffDocumentIdentity(input)).not.toBe(diffDocumentIdentity({ ...input, sections: input.sections.map(s => ({ ...s, patchOnly: false })) }));
+  });
   it("splits CRLF, CR, and LF source without changing row geometry", () => {
     expect(splitSourceLines("one\r\ntwo\rthree\nfour")).toEqual([
       "one",

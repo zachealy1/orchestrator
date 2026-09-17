@@ -70,6 +70,7 @@ export type PrepareDiffSectionInput = {
   diffContent: string;
   baseTruncated: boolean;
   headTruncated: boolean;
+  patchOnly?: boolean;
 };
 
 export type PrepareDiffDocumentInput = {
@@ -94,6 +95,7 @@ export function diffDocumentIdentity(input: PrepareDiffDocumentInput) {
     input.path,
     ...input.sections.flatMap((section) => [
       section.id,
+      section.patchOnly ? "recorded-patch" : "full-file",
       section.baseTruncated ? "base-truncated" : "base-complete",
       section.headTruncated ? "head-truncated" : "head-complete",
       previewContentFingerprint(section.baseContent),
@@ -176,14 +178,14 @@ export async function prepareDiffDocument(
     language !== "plaintext" &&
     sourceCharacters <= PREVIEW_HIGHLIGHT_MAX_CHARACTERS &&
     input.sections.every(
-      (section) => !section.baseTruncated && !section.headTruncated,
+      (section) => !section.patchOnly && !section.baseTruncated && !section.headTruncated,
     );
   recordPreviewDiagnostic({ identity, stage: "tokenization-started" });
 
   const sections = await Promise.all(
     input.sections.map(async (section) => {
       const useExactHunks =
-        (section.baseTruncated || section.headTruncated) &&
+        (section.patchOnly || section.baseTruncated || section.headTruncated) &&
         section.diffContent.length > 0;
       const [baseLines, headLines] = useHighlighting
         ? await Promise.all([
@@ -244,7 +246,7 @@ export function preparePlaintextDiffDocument(
 ): PreparedDiffDocument {
   const sections = input.sections.map((section) => {
     const useExactHunks =
-      (section.baseTruncated || section.headTruncated) &&
+      (section.patchOnly || section.baseTruncated || section.headTruncated) &&
       section.diffContent.length > 0;
     return {
       id: section.id,

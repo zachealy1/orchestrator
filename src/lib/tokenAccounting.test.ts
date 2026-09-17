@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyCodexMessage, emptyRunView } from "./codexEventReducer";
+import { formatTokenCount } from "./streamMetrics";
 
 function report(total: number, last: number, cached: number, lastCached: number) {
   return {
@@ -62,6 +63,7 @@ describe("per-run token accounting", () => {
     state = applyCodexMessage(state, { method: "turn/started", params: { turn: { id: "next-goal-turn" } } });
     state = applyCodexMessage(state, report(250, 150, 200, 120));
     expect(state.tokenUsage?.turnTokens).toBe(250);
+    expect(state.turnId).toBe("next-goal-turn");
   });
 
   it("preserves unknown usage when no baseline or last request was reported", () => {
@@ -78,5 +80,19 @@ describe("per-run token accounting", () => {
     });
     state = applyCodexMessage(state, report(100, 100, 80, 80));
     expect(state.tokenUsage?.turnTokens).toBe(100);
+  });
+});
+
+describe("shared stream token labels", () => {
+  it("distinguishes pending, unavailable, zero, and reported turn usage", () => {
+    expect(formatTokenCount(emptyRunView)).toBe("Token usage pending");
+    expect(formatTokenCount({ ...emptyRunView, status: "completed" })).toBe("Token usage unavailable");
+    expect(formatTokenCount(applyCodexMessage(emptyRunView, report(0, 0, 0, 0)))).toBe("0 tokens");
+    expect(formatTokenCount(applyCodexMessage(resumed(500, 0), report(2900, 2400, 0, 0)))).toBe("2,400 tokens");
+  });
+  it("does not display cumulative usage when turn usage is unknown", () => {
+    const state = applyCodexMessage(resumed(null, null), { method: "thread/tokenUsage/updated", params: { tokenUsage: { total: { totalTokens: 50000 } } } });
+    expect(formatTokenCount(state)).toBe("Token usage unavailable");
+    expect(formatTokenCount({ ...state, status: "completed" })).toBe("Token usage unavailable");
   });
 });

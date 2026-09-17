@@ -1,6 +1,7 @@
 import { useAsyncQuestions } from "../features/asyncQuestions/useAsyncQuestions";
 import { AsyncQuestionContext } from "../features/asyncQuestions/AsyncQuestions";
 import { mergeHistoricalAsyncMessages } from "../features/asyncQuestions/history";
+import { mergeHistoricalActivityStream } from "../lib/historicalActivityStream";
 import { choosePlanImplementationModel, choosePlanImplementationReasoning } from "../features/plans/implementationModel";
 import { streamRunKey } from "../lib/streamIdentity";
 import type { StreamNotification } from "../features/codex/CodexStreamScheduler";
@@ -9169,13 +9170,13 @@ function App() {
         );
         return {
           ...current,
-          runView: {
+          runView: mergeHistoricalActivityStream({
             ...current.runView,
             commands: mergeCommandActivities(
               current.runView.commands,
               response.commands.map((command) => ({ ...command, output: "" })),
             ),
-            editedFiles: mergeEditedFileActivities(
+            editedFiles: current.runView.latestDiff ? current.runView.editedFiles : mergeEditedFileActivities(
               current.runView.editedFiles,
               response.editedFiles,
               pathAliases,
@@ -9183,7 +9184,7 @@ function App() {
             toolActivitiesById: tools.byId,
             toolActivityOrder: tools.order,
             ...mergeHistoricalAsyncMessages(current.runView, response.asyncMessages ?? []),
-          },
+          }, response.events, current.prompt),
           historicalActivity: current.historicalActivity
             ? {
                 ...current.historicalActivity,
@@ -17120,7 +17121,7 @@ function App() {
     }
 
     let nextRunView = updateRunControlView(control, (current) => {
-      let next = applyCodexMessage(current, message);
+      let next = applyCodexMessage(current.profileKey === profileKey ? current : { ...current, profileKey }, message);
       if (intermediateGoalTurnCompleted || (method === "turn/interrupted" && control.acceptsThreadContinuation && goalKeepsRunOpen(control.goal))) {
         next = {
           ...next,
@@ -21287,6 +21288,7 @@ function App() {
                         onRevisePlan: reviseTranscriptPlan,
                         onCancelPlan: cancelTranscriptPlan,
                         onOpenTranscriptLink: openTranscriptLink,
+                        onDraftToolMessage: changeComposerPrompt, onInspectActivitySubagent: (profileKey, threadId) => { const record = subagentStore.findByThread(profileKey, threadId); if (record) openSubagentInspector(record); },
                         onOpenWebPreview: openTranscriptWebPreview,
                         onReviewEditedFile: reviewTranscriptEditedFile,
                         onUndoEditedFiles: undoTranscriptEditedFiles,

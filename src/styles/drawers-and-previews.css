@@ -133,7 +133,7 @@
 .subagent-transcript-turn {
   display: grid;
   min-width: 0;
-  gap: 14px;
+  gap: var(--stream-entry-gap);
   padding: 14px;
 }
 
@@ -152,7 +152,7 @@
 }
 
 .subagent-transcript-turn .stream-event-list {
-  gap: 14px;
+  gap: var(--stream-entry-gap);
 }
 
 .subagent-transcript-turn .stream-event {

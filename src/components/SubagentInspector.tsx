@@ -1,6 +1,7 @@
 import { AsyncQuestions, SubagentAsyncQuestion } from "../features/asyncQuestions/AsyncQuestions";
-import { ActivityTimeline, ActivityDisclosure, activityStatusLabel } from "./TranscriptActivity";
+import { ActivityTimeline, attentionTimelineItems, ActivityDisclosure, activityStatusLabel } from "./TranscriptActivity";
 import { subagentTimeline } from "../lib/subagentTimeline";
+import { StreamHostProvider } from "./StreamHost";
 import { useDocumentVisible } from "../shared/documentVisibility";
 import {
   Check,
@@ -461,7 +462,7 @@ export const SubagentInspector = memo(function SubagentInspector({
                   Original prompt unavailable for this older subagent.
                 </p>
               ) : (
-                <SubagentTranscriptTurnView turn={row.turn} threadId={record.childThreadId} profileKey={record.profileKey} />
+                <SubagentTranscriptTurnView turn={row.turn} threadId={record.childThreadId} profileKey={record.profileKey} onDraft={setInstruction} />
               )
             }
           />
@@ -636,9 +637,9 @@ function filterSubagentInteractions(
 }
 
 const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
-  turn, threadId, profileKey,
+  turn, threadId, profileKey, onDraft,
 }: {
-  turn: SubagentTranscriptTurn; threadId: string; profileKey: string;
+  turn: SubagentTranscriptTurn; threadId: string; profileKey: string; onDraft: (text: string) => void;
 }) {
   const userItems = turn.items.filter(
     (item): item is Extract<SubagentTranscriptItem, { kind: "user" }> =>
@@ -650,6 +651,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
   );
   const streamItems = turn.items.filter(
     (item) =>
+      item.kind === "plan" || (item.kind === "user" && item !== userItems[0]) ||
       item.kind === "activity" ||
       item.kind === "reasoning" ||
       (item.kind === "assistant" && item.delivery !== "async" && item.phase === "commentary"),
@@ -661,13 +663,13 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
       SubagentTranscriptItem,
       { kind: "assistant" | "plan" }
     > =>
-      item.kind === "plan" ||
       (item.kind === "assistant" && item.delivery !== "async" && item.phase !== "commentary"),
   );
 
   return (
+    <StreamHostProvider profileKey={profileKey} threadId={threadId} turnId={turn.id} onDraft={onDraft}>
     <article className="subagent-transcript-turn" data-turn-status={turn.status}>
-      {userItems.map((item) => (
+      {userItems.slice(0, 1).map((item) => (
         <div className="submitted-prompt-stack" key={item.id}>
           <article className="submitted-prompt" aria-label="Submitted prompt">
             {item.text}
@@ -684,7 +686,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
             {streamItems.length > 0 ? (
               <ActivityDisclosure active={isActiveTranscriptTurn(turn.status)}
                 label={activityStatusLabel(turn.status, Math.max(0, (Date.parse(turn.completedAt ?? "") || Date.now()) - (Date.parse(turn.startedAt ?? "") || Date.now())))}
-                attention={<ActivityTimeline items={subagentTimeline(streamItems.filter((item) => item.kind === "activity" && ["failed", "declined", "interrupted", "inProgress", "running"].includes(item.status ?? "")))} />}>
+                attention={<ActivityTimeline items={attentionTimelineItems(subagentTimeline(streamItems))} />}>
                 <ActivityTimeline active={isActiveTranscriptTurn(turn.status)} items={subagentTimeline(streamItems)} />
               </ActivityDisclosure>
             ) : null}
@@ -707,6 +709,7 @@ const SubagentTranscriptTurnView = memo(function SubagentTranscriptTurnView({
         </article>
       ) : null}
     </article>
+    </StreamHostProvider>
   );
 });
 
