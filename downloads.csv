@@ -4,7 +4,7 @@ v0.2.0-beta.2,aarch64,installer,15,0
 v0.2.0-beta.2,aarch64,update,2,0
 v0.2.0-beta.2,x86_64,installer,11,0
 v0.2.0-beta.2,x86_64,update,2,0
-v0.2.0-beta.3,aarch64,installer,5,4
-v0.2.0-beta.3,aarch64,update,3,3
-v0.2.0-beta.3,x86_64,installer,3,3
-v0.2.0-beta.3,x86_64,update,3,3
+v0.2.0-beta.3,aarch64,installer,5,0
+v0.2.0-beta.3,aarch64,update,3,0
+v0.2.0-beta.3,x86_64,installer,3,0
+v0.2.0-beta.3,x86_64,update,3,0
