@@ -133,7 +133,7 @@
 .subagent-transcript-turn {
   display: grid;
   min-width: 0;
-  gap: 14px;
+  gap: var(--stream-entry-gap);
   padding: 14px;
 }
 
@@ -152,7 +152,7 @@
 }
 
 .subagent-transcript-turn .stream-event-list {
-  gap: 14px;
+  gap: var(--stream-entry-gap);
 }
 
 .subagent-transcript-turn .stream-event {
@@ -308,6 +308,31 @@ button.history-run-item.disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.history-run-text {
+  display: flex;
+  flex: 1 1 0;
+  align-items: baseline;
+  min-width: 0;
+  gap: 5px;
+}
+
+.history-run-workspace {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+.history-run-separator {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+}
+
+.history-run-text strong { flex: 1 1 0; }
 
 .history-run-spinner {
   flex: 0 0 auto;

@@ -225,6 +225,7 @@ export function readProjectedSubagentThread(input: {
 }
 
 export type HistoricalTurnActivityResponse = {
+  events?: Array<{ method: string; params: Record<string, unknown> }>;
   asyncMessages?: unknown[];
   commands: Array<Omit<RunCommandActivity, "output">>;
   editedFiles: RunEditedFile[];
@@ -264,6 +265,7 @@ function projectHistoricalTurnActivityResponse(
   response: Awaited<ReturnType<typeof commands.codexDefaultProfileTurnActivity>>,
 ) {
   return {
+    events: (response.events ?? []) as Array<{ method: string; params: Record<string, unknown> }>,
     asyncMessages: response.asyncMessages ?? [],
     commands: response.commands.map((command) => ({
       ...command,

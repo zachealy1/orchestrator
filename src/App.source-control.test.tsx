@@ -49,7 +49,7 @@ describe("Git workspace integration", () => {
   it("toggles sidebar visibility with Cmd+B and explicit shortcuts reopen it without changing Kanban", async () => {
     const { user } = await renderApp();
     const key = (code: string, value: string) => fireEvent.keyDown(window, { code, key: value, metaKey: true });
-    key("Digit4", "4"); key("KeyB", "b");
+    key("Digit5", "5"); key("KeyB", "b");
     expect(document.querySelector("#workspace-sidebar")).not.toBeVisible();
     await user.click(screen.getByRole("button", { name: "Source control" }));
     key("Digit2", "2");

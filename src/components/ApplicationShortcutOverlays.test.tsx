@@ -92,7 +92,7 @@ describe("application shortcut overlays", () => {
     expect(screen.getByText("Ctrl+/")).toBeInTheDocument();
     for (const [index, label] of [
       "Sidebar: Chats", "Sidebar: Files", "Sidebar: Priority",
-      "Open Kanban", "Open Chat", "Open Analytics", "Open Plugins",
+      "Open Chat", "Open Kanban", "Open Analytics", "Open Plugins",
     ].entries()) {
       expect(screen.getByText(label).closest(".keyboard-shortcut-row"))
         .toHaveTextContent(`Ctrl+${index + 1}`);

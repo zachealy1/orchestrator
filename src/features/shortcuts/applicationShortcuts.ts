@@ -45,15 +45,6 @@ export type ApplicationCommand = ApplicationCommandDefinition & {
 
 export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
   {
-    id: "toggle-sidebar", label: "Toggle sidebar", description: "Show or hide the workspace sidebar",
-    group: "Navigation", keywords: ["sidebar", "collapse", "expand"],
-    shortcut: shortcut("KeyB", "b", "B", "B"), showInPalette: true,
-  },
-  {
-    id: "open-source-control", label: "Open Source control", description: "Stage files, inspect history, and synchronize Git",
-    group: "Navigation", keywords: ["git", "source", "control", "commit", "history"], shortcut: null, showInPalette: true,
-  },
-  {
     id: "new-chat",
     label: "New chat",
     description: "Start a new chat in the selected workspace",
@@ -99,13 +90,13 @@ export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
     showInPalette: true,
   },
   {
-    id: "open-kanban",
-    label: "Open Kanban",
-    description: "Show the selected workspace board",
-    group: "Navigation",
-    keywords: ["kanban", "board", "cards"],
-    shortcut: shortcut("Digit4", "4", "4", "4"),
-    showInPalette: true,
+    id: "toggle-sidebar", label: "Toggle sidebar", description: "Show or hide the workspace sidebar",
+    group: "Navigation", keywords: ["sidebar", "collapse", "expand"],
+    shortcut: shortcut("KeyB", "b", "B", "B"), showInPalette: true,
+  },
+  {
+    id: "open-source-control", label: "Open Source control", description: "Stage files, inspect history, and synchronize Git",
+    group: "Navigation", keywords: ["git", "source", "control", "commit", "history"], shortcut: null, showInPalette: true,
   },
   {
     id: "open-chat",
@@ -113,6 +104,15 @@ export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
     description: "Show the selected workspace chat",
     group: "Navigation",
     keywords: ["chat", "task", "conversation"],
+    shortcut: shortcut("Digit4", "4", "4", "4"),
+    showInPalette: true,
+  },
+  {
+    id: "open-kanban",
+    label: "Open Kanban",
+    description: "Show the selected workspace board",
+    group: "Navigation",
+    keywords: ["kanban", "board", "cards"],
     shortcut: shortcut("Digit5", "5", "5", "5"),
     showInPalette: true,
   },

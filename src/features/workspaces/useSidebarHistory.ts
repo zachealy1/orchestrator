@@ -6,6 +6,11 @@ import type {
 } from "../conversations/types";
 import type { Workspace } from "./types";
 import {
+  isWithinPriorityWindow,
+  PRIORITY_WINDOW_MS,
+} from "../../shared/priorityHistory";
+import { nextLocalMidnight } from "./priorityHistory";
+import {
   persistSidebarPreferences,
   readSidebarPreferences,
   type SidebarMode,
@@ -14,6 +19,7 @@ import {
 export type SidebarHistoryState = WorkspaceHistoryState & { hasMore: boolean };
 export type PriorityHistoryState = Omit<WorkspaceHistoryState, "chats"> & {
   chats: PriorityChatListItem[];
+  now: number;
 };
 const emptyHistory = (): SidebarHistoryState => ({
   status: "idle",
@@ -21,7 +27,7 @@ const emptyHistory = (): SidebarHistoryState => ({
   error: null,
   hasMore: false,
 });
-export const PRIORITY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CHAT_PAGE_SIZE = 5;
 
 export function useSidebarHistory(input: {
   workspaces: Workspace[];
@@ -44,7 +50,7 @@ export function useSidebarHistory(input: {
   const [histories, setHistories] = useState<
     Record<number, SidebarHistoryState>
   >({});
-  const [priority, setPriority] = useState<PriorityHistoryState>({
+  const [priority, setPriority] = useState<Omit<PriorityHistoryState, "now">>({
     status: "idle",
     chats: [],
     error: null,
@@ -96,6 +102,11 @@ export function useSidebarHistory(input: {
     [],
   );
   const requests = useRef(new Map<number, number>());
+  // Retain the requested window across refreshes and failed loads. A retry
+  // must not advance past the batch the user has not received yet.
+  const workspaceLimits = useRef(
+    new Map<number, { requested: number; loaded: number }>(),
+  );
   const requestSequence = useRef(0);
   const priorityRequest = useRef(0);
   const alive = useRef(true);
@@ -134,8 +145,15 @@ export function useSidebarHistory(input: {
       const request = ++requestSequence.current;
       requests.current.set(id, request);
       const previous = historiesRef.current[id] ?? emptyHistory();
-      const limit = more ? 50 : Math.max(50, previous.chats.length);
-      const offset = more ? previous.chats.length : 0;
+      const page = workspaceLimits.current.get(id) ?? {
+        requested: CHAT_PAGE_SIZE,
+        loaded: 0,
+      };
+      if (more && page.requested === page.loaded && previous.hasMore) {
+        page.requested += CHAT_PAGE_SIZE;
+      }
+      workspaceLimits.current.set(id, page);
+      const limit = page.requested;
       const valid = () =>
         alive.current &&
         requests.current.get(id) === request &&
@@ -147,23 +165,19 @@ export function useSidebarHistory(input: {
         [id]: { ...previous, status: "loading", error: null },
       }));
       try {
-        const rows = await current.current.listChats(id, limit + 1, offset);
+        // Re-read the entire visible prefix so new activity cannot shift an
+        // offset page and cause skipped or duplicated chats.
+        const rows = await current.current.listChats(id, limit + 1, 0);
         if (!valid()) return;
         const chats = rows.slice(0, limit).map(mergeTitle);
+        page.loaded = limit;
         setHistories((states) => ({
           ...states,
           [id]: {
             status: "loaded",
             error: null,
             hasMore: rows.length > limit,
-            chats: [
-              ...new Map(
-                [...(more ? previous.chats : []), ...chats].map((chat) => [
-                  chat.id,
-                  chat,
-                ]),
-              ).values(),
-            ],
+            chats,
           },
         }));
       } catch (error) {
@@ -179,11 +193,12 @@ export function useSidebarHistory(input: {
 
   const refreshPriority = useCallback(async () => {
     const request = ++priorityRequest.current;
-    setNow(Date.now());
+    const refreshedAt = Date.now();
+    setNow(refreshedAt);
     setPriority((state) => ({ ...state, status: "loading", error: null }));
     try {
       const chats = await current.current.listPriority(
-        new Date().toISOString(),
+        new Date(refreshedAt).toISOString(),
       );
       if (alive.current && priorityRequest.current === request)
         setPriority({
@@ -285,6 +300,8 @@ export function useSidebarHistory(input: {
     const ids = new Set(input.workspaces.map((w) => w.id));
     for (const id of requests.current.keys())
       if (!ids.has(id)) requests.current.delete(id);
+    for (const id of workspaceLimits.current.keys())
+      if (!ids.has(id)) workspaceLimits.current.delete(id);
     setHistories((states) =>
       Object.fromEntries(
         Object.entries(states).filter(([id]) => ids.has(Number(id))),
@@ -293,11 +310,11 @@ export function useSidebarHistory(input: {
   }, [workspaceKey]);
   useEffect(() => {
     const expiry = Math.min(
+      nextLocalMidnight(now),
       ...priority.chats
         .map((chat) => Date.parse(chat.latest_finished_at) + PRIORITY_WINDOW_MS)
         .filter((time) => time > now),
     );
-    if (!Number.isFinite(expiry)) return;
     const timer = window.setTimeout(
       () => setNow(Date.now()),
       Math.max(1, expiry - Date.now()),
@@ -314,10 +331,11 @@ export function useSidebarHistory(input: {
     histories,
     priority: {
       ...priority,
+      now,
       chats: priority.chats.filter(
         (chat) =>
           input.workspaces.some((w) => w.id === chat.workspace_id) &&
-          Date.parse(chat.latest_finished_at) > now - PRIORITY_WINDOW_MS,
+          isWithinPriorityWindow(Date.parse(chat.latest_finished_at), now),
       ),
     },
     refreshWorkspace,

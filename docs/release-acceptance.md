@@ -1,5 +1,21 @@
 # Public beta acceptance record
 
+## Community beta.3 release request — 2026-09-17
+
+The maintainer explicitly requested a full release, merging `release` into `main` and replacing README screenshots after removing account details. Preparation starts from `098457a` on `release`, synchronizes version **0.2.0-beta.3**, and updates documentation and screenshots. Before publication, the maintainer also requested Chat on `⌘4` and Kanban on `⌘5`; the shared shortcut registry, hints, accessibility labels and regression tests reflect that mapping. Publish from the exact resulting main commit only after required source checks pass. The release tag, package receipts and workflow checkout must identify that same commit.
+
+This request authorizes publication, but does not assert a new manual testing campaign. Preserve beta.2's manual-testing report below as historical evidence. No clean-machine installation, supported-OS matrix or two-version update rehearsal is claimed for beta.3. Screenshot inspection is documentation validation, not behavioral acceptance of the release packages.
+
+The community workflow builds Apple Silicon and Intel packages, checks source/version/architecture and bundled runtimes, verifies ad-hoc app signatures and independent updater signatures, and compares uploaded artifact hashes. Its receipts retain `behavioralTesting: "not-performed"`. Actual CI and package results are recorded by the linked release workflow and public receipts, rather than marked passed in advance here. Publish all ten assets before advancing the beta feed; preserve existing versions unchanged.
+
+The five new screenshots retain their original dimensions. Visual inspection, OCR, pixel comparisons and metadata checks confirm that only the complete account footer was removed. The isolated capture app hides the local-review publication notice at the maintainer's request; this presentation override is excluded from the release application. See the [capture record](assets/screenshots/README.md).
+
+### Dependency alerts reviewed for beta.3
+
+On 2026-09-17, `npm audit --omit=dev` reported zero production dependency vulnerabilities. The two open npm alerts (`vitest` and `@vitest/mocker`, GHSA-82fw-gwwq-j7x9) concern a development-server redirect-mocking file-read issue. This repository uses Vitest's jsdom test runner and does not configure the affected standalone mocker/interceptor plugins or browser mode. These development dependencies are not packaged with the app. Upgrading the test toolchain remains follow-up work; the alerts are not marked resolved.
+
+The open `glib` alert (GHSA-wrw7-89jp-8q8g) does not affect the selected macOS packages: `glib` is absent from the locked normal/build dependency graphs for both `aarch64-apple-darwin` and `x86_64-apple-darwin`. This is a target-specific applicability check, not a clean full-lockfile audit or a global advisory exemption. Historical dependency maintenance limitations below remain disclosed.
+
 ## Community beta.2 acceptance — 2026-09-12
 
 The maintainer reports having manually tested the release-branch changes and explicitly requested publication of **0.2.0-beta.2** for Apple Silicon and Intel on macOS 15+. Accept that report without adding another application-testing campaign or release rehearsal. The report does not identify individual scenarios, hardware, macOS versions, a clean-machine installation, or a two-version updater rehearsal; none of those results are inferred.

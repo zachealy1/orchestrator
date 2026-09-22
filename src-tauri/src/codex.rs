@@ -465,6 +465,7 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
         .cloned()
         .unwrap_or_default();
 
+    let events = items.iter().rev().map(crate::stream_projection::item_event).collect();
     for item in items {
         let is_question = item.get("type").and_then(Value::as_str) == Some("agentMessage")
             && item.get("delivery").and_then(Value::as_str) == Some("async");
@@ -590,6 +591,7 @@ pub(crate) fn project_historical_turn_activity(response: &Value) -> HistoricalTu
     }
 
     HistoricalTurnActivityResponse {
+        events,
         async_messages,
         commands,
         edited_files,
@@ -696,7 +698,7 @@ fn safe_protocol_identifier(value: Option<&str>) -> Option<String> {
     Some(value.to_string())
 }
 
-fn sanitize_tool_activity_title(value: &str) -> Option<String> {
+pub(crate) fn sanitize_tool_activity_title(value: &str) -> Option<String> {
     let normalized = value
         .chars()
         .map(|character| {
@@ -857,6 +859,26 @@ pub(crate) fn project_subagent_turn(turn: &Value) -> Option<ProjectedSubagentTur
 }
 
 pub(crate) fn project_subagent_item(item: &Value) -> Option<Value> {
+    let mut projected = project_subagent_item_legacy(item).or_else(|| {
+        let item_type = item.get("type").and_then(Value::as_str)?;
+        if !matches!(item_type, "userMessage" | "agentMessage" | "reasoning" | "plan") {
+            Some(project_activity_item(item.get("id").and_then(Value::as_str).unwrap_or("activity").into(), "mcp", "Agent activity".into(), project_status_label(item.get("status"))))
+        } else { None }
+    })?;
+    if projected.get("kind").and_then(Value::as_str) == Some("activity") {
+        let mut summary = crate::stream_projection::item_summary(item);
+        // Keep the existing subagent summary projection free of command bodies.
+        // Classification/path metadata is sufficient until details are opened.
+        if let Some(fields) = summary.as_object_mut() { fields.remove("command"); }
+        if let Some(actions) = summary.get_mut("commandActions").and_then(Value::as_array_mut) {
+            for action in actions { if let Some(fields) = action.as_object_mut() { fields.remove("command"); } }
+        }
+        projected.as_object_mut()?.insert("protocolItem".into(), summary);
+    }
+    Some(projected)
+}
+
+fn project_subagent_item_legacy(item: &Value) -> Option<Value> {
     let item_type = item.get("type").and_then(Value::as_str)?;
     let id = item
         .get("id")

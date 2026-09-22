@@ -77,9 +77,9 @@ describe("application keyboard shortcuts", () => {
     const prompt = screen.getByLabelText("Prompt");
     await user.type(prompt, "Keep this draft");
 
-    expect((await pressApplicationShortcut("Digit4", "4")).defaultPrevented).toBe(true);
-    expect(kanban).toHaveAttribute("aria-checked", "true");
     expect((await pressApplicationShortcut("Digit5", "5")).defaultPrevented).toBe(true);
+    expect(kanban).toHaveAttribute("aria-checked", "true");
+    expect((await pressApplicationShortcut("Digit4", "4")).defaultPrevented).toBe(true);
     expect(chat).toHaveAttribute("aria-checked", "true");
     expect(screen.getByLabelText("Prompt")).toHaveValue("Keep this draft");
 
@@ -104,8 +104,10 @@ describe("application keyboard shortcuts", () => {
       "data-tooltip",
       "Plugins (⌘7)",
     );
-    expect(chat).toHaveAttribute("aria-keyshortcuts", "Meta+5");
-    expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+4");
+    expect(chat).toHaveAttribute("aria-keyshortcuts", "Meta+4");
+    expect(kanban).toHaveAttribute("aria-keyshortcuts", "Meta+5");
+    expect(chat).toHaveAttribute("data-tooltip", "Chat (⌘4)");
+    expect(kanban).toHaveAttribute("data-tooltip", "Kanban (⌘5)");
   });
 
   it.each([
@@ -175,7 +177,7 @@ describe("application keyboard shortcuts", () => {
       ["Digit6", "6", "Analytics"],
       ["Digit7", "7", "Plugins"],
       ["Comma", ",", "Settings"],
-      ["Digit4", "4", "Kanban"],
+      ["Digit5", "5", "Kanban"],
     ]) {
       await pressApplicationShortcut(code, key);
       for (const [sidebarKey, label] of [["2", "Files"], ["3", "Priority"], ["1", "Chats"]]) {
@@ -414,7 +416,7 @@ describe("application keyboard shortcuts", () => {
       mocks.codexRpcMock.mock.calls.some(([, method]) => method === "turn/interrupt"),
     ).toBe(false);
 
-    await pressApplicationShortcut("Digit5", "5");
+    await pressApplicationShortcut("Digit4", "4");
     await pressApplicationShortcut("Period", ".");
     await waitFor(() =>
       expect(mocks.codexRpcMock).toHaveBeenCalledWith(7, "turn/interrupt", {

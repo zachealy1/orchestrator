@@ -142,6 +142,50 @@ describe("unified application sidebar", () => {
     ).toBeVisible();
   });
 
+  it("retains revealed chat counts across mode switches and workspace collapse", async () => {
+    mocks.listWorkspaceChatsMock.mockResolvedValue(Array.from({ length: 11 }, (_, index) =>
+      workspaceChatFixture({ id: index + 1, title: `History chat ${index + 1}` }),
+    ));
+    const { user } = await renderApp();
+    await openSidebarChats(user);
+    const rows = () => screen.getAllByRole("button", { name: /^History chat/ });
+    await waitFor(() => expect(rows()).toHaveLength(5));
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(rows()).toHaveLength(10));
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("button", { name: "Chats" }));
+    await waitFor(() => expect(rows()).toHaveLength(10));
+    await user.click(screen.getByRole("button", { name: "Collapse orchestrator" }));
+    expect(screen.queryByRole("button", { name: /^History chat/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Expand orchestrator" }));
+    await waitFor(() => expect(rows()).toHaveLength(10));
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(rows()).toHaveLength(11));
+    expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+  });
+
+  it("opens a dated Priority row in its owning workspace", async () => {
+    const other = { ...workspace, id: 2, path: "/second", label: "Second" };
+    const chat = workspaceChatFixture({ id: 402, workspace_id: 2, title: "Priority in second workspace" });
+    mocks.listWorkspacesMock.mockResolvedValue([workspace, other]);
+    mocks.listPriorityChatsMock.mockResolvedValue([{
+      ...chat, latest_finished_at: new Date().toISOString(), latest_finished_status: "completed",
+    }]);
+    mocks.getChatWithRunsMock.mockResolvedValue(workspaceChatWithRunsFixture(chat));
+    mocks.listLocalChatTranscriptMock.mockResolvedValue([{
+      ...workspaceRunFixture({ chat_id: 402, original_prompt: "Second workspace prompt", final_message: "Second workspace result" }),
+      workspace_id: 2,
+    }]);
+    const { user } = await renderApp();
+    await user.click(screen.getByRole("button", { name: "Priority" }));
+    const row = await screen.findByRole("button", { name: "Second · Priority in second workspace" });
+    expect(screen.getByRole("heading", { name: "Today" })).toBeVisible();
+    await user.click(row);
+    expect(await screen.findByText("Second workspace result")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Chats" }));
+    expect(screen.getByRole("button", { name: "Second" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("keeps read chats in Priority, hides a live rerun and restores it after finishing", async () => {
     prepareSignedInRun();
     const chat = workspaceChatFixture({ title: "Priority conversation" });
@@ -157,13 +201,13 @@ describe("unified application sidebar", () => {
     );
     const { user } = await renderApp();
     await user.click(screen.getByRole("button", { name: "Priority" }));
-    await user.click(await screen.findByRole("button", { name: /^Priority conversation/ }));
+    await user.click(await screen.findByRole("button", { name: /^orchestrator · Priority conversation/ }));
     expect(await screen.findByLabelText("Submitted prompt")).toBeVisible();
-    expect(screen.getByRole("button", { name: /^Priority conversation/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^orchestrator · Priority conversation/ })).toBeVisible();
     await startMockRun(user, "Run it again");
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: /^Priority conversation/ }),
+        screen.queryByRole("button", { name: /^orchestrator · Priority conversation/ }),
       ).not.toBeInTheDocument(),
     );
     await emitCodexNotification({
@@ -174,7 +218,7 @@ describe("unified application sidebar", () => {
         turn: { id: "turn-1", status: "completed", durationMs: 1000 },
       },
     });
-    expect(await screen.findByRole("button", { name: /^Priority conversation/ })).toBeVisible();
+    expect(await screen.findByRole("button", { name: /^orchestrator · Priority conversation/ })).toBeVisible();
     const calls = mocks.listPriorityChatsMock.mock.calls.length;
     fireEvent(window, new Event("focus"));
     await waitFor(() =>
@@ -184,7 +228,7 @@ describe("unified application sidebar", () => {
     );
     expect(
       within(screen.getByRole("navigation", { name: "Priority" })).getByRole(
-        "button", { name: /^Priority conversation/ },
+        "button", { name: /^orchestrator · Priority conversation/ },
       ),
     ).toBeVisible();
   });

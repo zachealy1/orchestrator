@@ -117,10 +117,10 @@ describe("stream alignment", () => {
       tool("third"),
     ]);
     const items = buildTimelineItems(state);
-    expect(items.map((item) => item.kind)).toEqual(["tools", "event", "tools"]);
+    expect(items.map((item) => item.kind)).toEqual(["activities", "event", "activities"]);
     expect(
       items.flatMap((item) =>
-        item.kind === "tools"
+        item.kind === "activities"
           ? item.activities.map((activity) => activity.id)
           : [],
       ),
@@ -221,7 +221,7 @@ it("anchors final-only reasoning and delayed message deltas at item start", () =
     buildTimelineItems(state).map((item) =>
       item.kind === "event" ? item.event.text : item.kind,
     ),
-  ).toEqual(["Reasoned", "Message", "tools"]);
+  ).toEqual(["Reasoned", "Message", "activities"]);
 });
 
 it("retains authoritative command exit codes with output through replay and late deltas", () => {

@@ -1,3 +1,21 @@
+/* Shared rhythm for live, restored, and subagent stream presentation. */
+:root {
+  --stream-entry-gap: 18px;
+  --stream-activity-font-size: 0.95rem;
+  --stream-activity-line-height: 1.45;
+}
+
+.run-live-metrics,
+.run-activity-group > summary,
+.run-activity-item,
+.activity-status,
+.stream-detail-summary,
+.stream-event,
+.stream-placeholder {
+  font-size: var(--stream-activity-font-size);
+  line-height: var(--stream-activity-line-height);
+}
+
 .task-hero {
   position: relative;
   flex: 1 1 0;
@@ -29,7 +47,7 @@
 }
 
 .task-hero.has-chat {
-  --task-chat-section-gap: 18px;
+  --task-chat-section-gap: var(--stream-entry-gap);
 
   align-items: stretch;
   justify-content: flex-end;
@@ -218,7 +236,7 @@
   box-sizing: border-box;
   overflow-anchor: none;
   padding: 4px var(--task-hero-inline-padding)
-    var(--task-chat-section-gap, 18px);
+    var(--stream-entry-gap);
   contain: layout style;
   background: var(--color-background);
 }
@@ -261,7 +279,7 @@
   width: 100%;
   max-width: var(--history-chat-content-max-width, 1040px);
   justify-self: center;
-  gap: 14px;
+  gap: var(--stream-entry-gap);
 }
 
 .submitted-prompt-stack {
@@ -603,7 +621,7 @@ button.submitted-prompt-edit-button:focus-visible {
 .run-output-surface {
   display: grid;
   min-width: 0;
-  gap: var(--task-chat-section-gap, 18px);
+  gap: var(--stream-entry-gap);
   color: var(--color-text);
 }
 
@@ -613,7 +631,6 @@ button.submitted-prompt-edit-button:focus-visible {
   gap: 10px;
   align-items: center;
   color: var(--color-text-secondary);
-  font-size: 0.83rem;
 }
 
 .run-live-metrics span {
@@ -632,25 +649,32 @@ summary.run-live-metrics::-webkit-details-marker {
   display: none;
 }
 
-.run-trace-chevron {
-  color: var(--color-icon-muted);
+/* A disclosure's own state controls its arrow, including nested disclosures. */
+.stream-disclosure-chevron {
+  flex-shrink: 0;
+  transform: rotate(0deg);
   transition: transform 140ms ease;
 }
 
-.stream-trace[open] .run-trace-chevron {
+details[open] > summary > .stream-disclosure-chevron,
+button[aria-expanded="true"] > .stream-disclosure-chevron {
   transform: rotate(90deg);
+}
+
+.run-trace-chevron {
+  color: var(--color-icon-muted);
 }
 
 .stream-event-list {
   display: grid;
   min-width: 0;
-  gap: 18px;
+  gap: var(--stream-entry-gap);
 }
 
 .run-activity-groups {
   display: grid;
   min-width: 0;
-  gap: 12px;
+  gap: var(--stream-entry-gap);
 }
 
 .run-activity-group {
@@ -663,8 +687,6 @@ summary.run-live-metrics::-webkit-details-marker {
   gap: 10px;
   align-items: center;
   cursor: pointer;
-  font-size: 0.95rem;
-  line-height: 1.45;
   list-style: none;
 }
 
@@ -672,13 +694,8 @@ summary.run-live-metrics::-webkit-details-marker {
   display: none;
 }
 
-.run-activity-group > summary > svg {
+.run-activity-group > summary > .stream-disclosure-chevron {
   color: var(--color-icon-muted);
-  transition: transform 140ms ease;
-}
-
-.run-activity-group[open] > summary > svg:last-child {
-  transform: rotate(180deg);
 }
 
 .run-activity-title {
@@ -690,11 +707,11 @@ summary.run-live-metrics::-webkit-details-marker {
 .run-activity-items {
   display: grid;
   min-width: 0;
-  gap: 8px;
+  gap: var(--stream-entry-gap);
 }
 
 .run-activity-group > .run-activity-items {
-  margin-top: 10px;
+  margin-top: var(--stream-entry-gap);
 }
 
 .run-activity-item {
@@ -704,15 +721,13 @@ summary.run-live-metrics::-webkit-details-marker {
   gap: 7px;
   align-items: baseline;
   color: var(--color-text-secondary);
-  font-size: 0.95rem;
-  line-height: 1.45;
 }
 
 .command-activity-groups,
 .tool-activity-groups {
   display: grid;
   min-width: 0;
-  gap: 10px;
+  gap: var(--stream-entry-gap);
 }
 
 .tool-activity-row {
@@ -1076,8 +1091,6 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   gap: 10px;
   align-items: center;
   color: var(--color-text-secondary);
-  font-size: 0.94rem;
-  line-height: 1.4;
 }
 
 .stream-placeholder {
@@ -1297,15 +1310,15 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   max-width: 980px;
 }
 
-.stream-trace .stream-event-list {
-  margin-top: 18px;
+.stream-trace-content {
+  margin-top: var(--stream-entry-gap);
 }
 
 .historical-activity-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 14px 0 0;
+  margin: var(--stream-entry-gap) 0 0;
   color: var(--color-text-secondary);
   font-size: 0.82rem;
 }
@@ -1323,7 +1336,8 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   display: block;
 }
 
-.command-summary {
+.command-summary,
+.stream-detail-summary {
   display: flex;
   width: fit-content;
   max-width: 100%;
@@ -1335,7 +1349,8 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   color: var(--color-text-secondary);
 }
 
-.command-summary::-webkit-details-marker {
+.command-summary::-webkit-details-marker,
+.stream-detail-summary::-webkit-details-marker {
   display: none;
 }
 
@@ -1370,17 +1385,9 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
   white-space: nowrap;
 }
 
-.command-chevron {
-  transition: transform 150ms ease;
-}
-
-.command-row[open] > .command-summary .command-chevron {
-  transform: rotate(90deg);
-}
-
 .command-output {
   min-width: 0;
-  margin: 10px 0 0 22px;
+  margin: var(--stream-entry-gap) 0 0 22px;
   overflow: hidden;
   border: 1px solid var(--color-divider);
   border-radius: 8px;
@@ -1433,7 +1440,8 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 @media (prefers-reduced-motion: no-preference) {
   [data-stream-enter],
   .stream-trace-content {
-    animation: stream-content-enter 220ms cubic-bezier(.33, 1, .68, 1) both;
+    /* Release the transform after entry so expanded widgets use the viewport. */
+    animation: stream-content-enter 220ms cubic-bezier(.33, 1, .68, 1) backwards;
   }
 
   .stream-working-label {
@@ -1448,9 +1456,7 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .command-chevron,
-  .run-trace-chevron,
-  .run-activity-group > summary > svg {
+  .stream-disclosure-chevron {
     transition: none;
   }
 
@@ -1458,3 +1464,64 @@ button.edited-files-disclosure:focus-visible:not(:disabled) {
     animation: none;
   }
 }
+/* Protocol activity shares the existing transcript rhythm and disclosures. */
+.structured-activity-groups { display: flex; flex-direction: column; gap: var(--stream-entry-gap); min-width: 0; }
+.structured-activity { display: grid; gap: var(--stream-entry-gap); min-width: 0; }
+.structured-activity .command-summary { min-width: 0; }
+.structured-activity .command-summary > span { min-width: 0; overflow-wrap: anywhere; }
+.structured-activity .command-summary > svg { flex-shrink: 0; }
+.structured-activity.is-failed .command-summary > svg:first-child { color: var(--color-text-secondary); }
+.activity-detail { display: grid; gap: var(--stream-entry-gap); margin-top: var(--stream-entry-gap); padding-left: 23px; min-width: 0; }
+.activity-detail > * { margin-block: 0; }
+.activity-detail details > :not(summary) { margin-block: var(--stream-entry-gap) 0; }
+.activity-command-action { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; }
+.activity-detail .command-output { margin: 0; }
+.activity-tool-identity { color: var(--color-text-secondary); font-size: .85em; }
+.activity-results { display: flex; flex-direction: column; gap: var(--stream-entry-gap); min-width: 0; margin: 0; }
+.activity-results > details > :not(summary) { margin-block: var(--stream-entry-gap) 0; }
+.activity-json { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85em; }
+.activity-artifact { display: grid; gap: var(--stream-entry-gap); border: 1px solid var(--color-divider); border-radius: 8px; padding: 12px; min-width: 0; }
+.activity-artifact > header { display: flex; align-items: center; gap: 8px; }
+.activity-artifact-identity { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 8px; }
+.activity-artifact-identity > svg { flex-shrink: 0; }
+.activity-artifact-labels { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.activity-artifact-labels > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.activity-artifact header a { overflow-wrap: anywhere; }
+.activity-artifact header span { color: var(--color-text-secondary); font-size: .85em; }
+.activity-image { margin: 0; min-width: 0; }
+.activity-image img, .activity-results video { display: block; max-width: 100%; max-height: 420px; object-fit: contain; border-radius: 8px; }
+.activity-image figcaption { margin-top: 6px; font-size: .85em; }
+.activity-results audio { max-width: 100%; }
+.activity-edit { margin: 0; }
+.activity-edit > summary { cursor: pointer; overflow-wrap: anywhere; }
+.stream-detail-summary > span { min-width: 0; overflow-wrap: anywhere; }
+.activity-inline-diff { overflow: hidden; margin-top: var(--stream-entry-gap); border: 1px solid var(--color-divider); border-radius: 6px; }
+.mixed-activity-group > summary { display: inline-flex; width: fit-content; max-width: 100%; align-items: center; gap: 7px; }
+.mixed-activity-group .run-activity-title { min-width: 0; gap: 7px; }
+.mixed-activity-group .run-activity-title > span { min-width: 0; overflow-wrap: anywhere; }
+.mixed-activity-group summary svg { flex-shrink: 0; }
+.activity-status { display: flex; align-items: center; gap: 7px; color: var(--color-text-secondary); }
+.activity-status > svg { flex-shrink: 0; }
+.activity-status-detail { margin: 0; padding-left: 22px; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.activity-widget { display: grid; align-content: start; gap: var(--stream-entry-gap); min-width: 0; border: 1px solid var(--color-divider); border-radius: 8px; padding: 10px; margin: 0; }
+.activity-widget > header { display: flex; justify-content: space-between; align-items: center; margin: 0; }
+.activity-widget iframe { border: 0; width: 100%; min-width: 0; background: transparent; }
+.widget-pending-action pre { max-height: 180px; overflow: auto; white-space: pre-wrap; }
+.widget-pending-action button { margin-right: 8px; }
+.activity-widget.is-expanded { position: fixed; inset: 30px; z-index: 1000; background: var(--color-component-background); overflow: auto; }
+
+.activity-artifact-actions { display: flex; flex: 0 0 auto; gap: 4px; margin-left: auto; }
+.activity-artifact > p, .activity-widget > p, .activity-widget-fallback { margin: 0; }
+button.activity-icon-button { width: 30px; min-width: 30px; min-height: 30px; background: transparent; color: var(--color-text-secondary); }
+button.activity-icon-button:hover:not(:disabled), button.activity-icon-button:focus-visible { background: var(--color-surface-soft); }
+.activity-plan { min-width: 0; }
+
+/* Opt-in review controls; these do not change the user's saved appearance settings. */
+.stream-demo-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: var(--stream-entry-gap); }
+.stream-demo-motion { display: inline-flex; align-items: center; gap: 7px; font-size: .85rem; color: var(--color-text-secondary); }
+.stream-demo-composer { display: grid; gap: var(--stream-entry-gap); margin-top: var(--stream-entry-gap); }
+.stream-demo-composer textarea:focus,
+.stream-demo-composer textarea:focus-visible { border-color: var(--line-strong); box-shadow: none; outline: none; }
+.stream-alignment-demo.is-reduced-motion *,
+.stream-alignment-demo.is-reduced-motion *::before,
+.stream-alignment-demo.is-reduced-motion *::after { animation: none !important; transition: none !important; }
