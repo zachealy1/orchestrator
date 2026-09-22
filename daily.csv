@@ -73,3 +73,12 @@ observed_utc_date,version,architecture,kind,observed_download_increase
 2026-09-21,v0.2.0-beta.3,aarch64,update,0
 2026-09-21,v0.2.0-beta.3,x86_64,installer,0
 2026-09-21,v0.2.0-beta.3,x86_64,update,0
+2026-09-22,v0.2.0-beta.1,aarch64,installer,0
+2026-09-22,v0.2.0-beta.2,aarch64,installer,0
+2026-09-22,v0.2.0-beta.2,aarch64,update,0
+2026-09-22,v0.2.0-beta.2,x86_64,installer,0
+2026-09-22,v0.2.0-beta.2,x86_64,update,0
+2026-09-22,v0.2.0-beta.3,aarch64,installer,0
+2026-09-22,v0.2.0-beta.3,aarch64,update,0
+2026-09-22,v0.2.0-beta.3,x86_64,installer,0
+2026-09-22,v0.2.0-beta.3,x86_64,update,0
