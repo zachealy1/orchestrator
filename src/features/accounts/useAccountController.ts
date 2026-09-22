@@ -132,7 +132,8 @@ export function useAccountController(): AccountController {
       if (
         container &&
         event.target instanceof Node &&
-        container.contains(event.target)
+        (container.contains(event.target) ||
+          (event.target instanceof Element && event.target.closest('[data-account-popover="true"]')))
       ) {
         return;
       }

@@ -131,7 +131,7 @@ describe("application keyboard shortcuts", () => {
     const selectMode = async (key: string, label: string) => {
       const event = await pressApplicationShortcut(`Digit${key}`, key, modifier);
       expect(event.defaultPrevented).toBe(true);
-      const button = within(screen.getByRole("group", { name: "Sidebar mode" }))
+      const button = within(screen.getByRole("navigation", { name: "Workspace navigation" }))
         .getByRole("button", { name: label });
       expect(button).toHaveAttribute("aria-pressed", "true");
       expect(button).toHaveAttribute("aria-keyshortcuts", `${ariaModifier}+${key}`);
@@ -168,7 +168,7 @@ describe("application keyboard shortcuts", () => {
     });
   });
 
-  it("keeps the current main view when selecting sidebar modes", async () => {
+  it("returns to the workspace and preserves Chat or Kanban when selecting sidebar modes", async () => {
     await renderApp();
     await screen.findByRole("region", { name: "Selected folder" });
     for (const [code, key, view] of [
@@ -185,7 +185,8 @@ describe("application keyboard shortcuts", () => {
           expect(within(workspaceSwitcher()).getByRole("radio", { name: "Kanban" }))
             .toHaveAttribute("aria-checked", "true");
         } else {
-          expect(screen.getByRole("button", { name: view })).toHaveClass("active");
+          expect(screen.getByRole("button", { name: view })).not.toHaveClass("active");
+          expect(within(workspaceSwitcher()).getByRole("radio", { name: "Chat" })).toHaveAttribute("aria-checked", "true");
         }
       }
     }
@@ -357,7 +358,9 @@ describe("application keyboard shortcuts", () => {
 
   it("hides bug reporting from the command palette while signed out", async () => {
     const { user } = await renderApp();
+    await user.click(await screen.findByLabelText("Codex account"));
     await screen.findByLabelText("Sign in to Codex");
+    await user.keyboard("{Escape}");
     await pressApplicationShortcut("KeyK", "k");
     await user.type(screen.getByRole("combobox", { name: "Search commands" }), "report bug");
     expect(screen.queryByRole("option", { name: /Report a bug/ })).not.toBeInTheDocument();

@@ -263,7 +263,7 @@ fn operation_error(
     }
 }
 
-fn cards_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn cards_root(app: &AppHandle) -> Result<PathBuf, String> {
     let root = app
         .path()
         .app_data_dir()
@@ -397,7 +397,7 @@ fn ensure_execution_root(cards_root: &Path, execution_root: &Path) -> Result<(),
     Ok(())
 }
 
-fn validate_command_binding(
+pub(crate) fn validate_command_binding(
     app_cards_root: &Path,
     binding: &KanbanGitRepositoryBinding,
 ) -> Result<(), String> {
@@ -417,12 +417,14 @@ fn validate_command_binding(
     Ok(())
 }
 
-fn git_output(repo: &Path, args: &[&str]) -> Result<Output, String> {
+pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Result<Output, String> {
     Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .stdin(Stdio::null())
         .output()
         .map_err(|error| format!("Unable to start Git: {error}"))
 }
@@ -1286,7 +1288,7 @@ fn expand_blocking(
     })
 }
 
-fn validate_live_binding(
+pub(crate) fn validate_live_binding(
     binding: &KanbanGitRepositoryBinding,
     require_worktree: bool,
 ) -> Result<(PathBuf, PathBuf), String> {
@@ -1777,6 +1779,7 @@ fn file_diff_blocking(request: KanbanGitFileDiffRequest) -> Result<WorkspaceGitD
 
 fn commit_blocking(request: KanbanGitCommitRequest) -> Result<KanbanGitActionResult, String> {
     let (_, worktree) = validate_live_binding(&request.binding, true)?;
+    let _guard = crate::source_control::acquire_git_mutation(&worktree)?;
     let message = request.message.trim();
     if message.is_empty() || message.len() > 10_000 || message.contains('\0') {
         return Err("Commit message must contain between 1 and 10,000 characters".into());
@@ -1822,6 +1825,7 @@ fn commit_blocking(request: KanbanGitCommitRequest) -> Result<KanbanGitActionRes
 
 fn push_blocking(binding: KanbanGitRepositoryBinding) -> Result<KanbanGitActionResult, String> {
     let (_, worktree) = validate_live_binding(&binding, true)?;
+    let _guard = crate::source_control::acquire_git_mutation(&worktree)?;
     let upstream = git_checked(
         &worktree,
         &[
@@ -1959,6 +1963,7 @@ fn preflight_non_fast_forward_merge(
 
 fn merge_blocking(request: KanbanGitMergeRequest) -> Result<KanbanGitMergeResult, String> {
     let (source, card_worktree) = validate_live_binding(&request.binding, true)?;
+    let _guard = crate::source_control::acquire_git_mutation(&source)?;
     if repository_is_dirty(&card_worktree)? {
         return Err("Commit or discard all card worktree changes before merging".into());
     }

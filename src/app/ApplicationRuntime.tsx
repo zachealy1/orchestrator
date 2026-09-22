@@ -1,3 +1,7 @@
+import { SourceControlView } from "../features/source-control/SourceControlView";
+import { gitOperationRequest, type ChatGitTarget } from "../features/source-control/types";
+import { ActivityRail } from "../features/navigation/ActivityRail";
+import { useActivityNavigation } from "../features/navigation/useActivityNavigation";
 import { useAsyncQuestions } from "../features/asyncQuestions/useAsyncQuestions";
 import { AsyncQuestionContext } from "../features/asyncQuestions/AsyncQuestions";
 import { mergeHistoricalAsyncMessages } from "../features/asyncQuestions/history";
@@ -15,14 +19,11 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertCircle,
-  BarChart3,
   FileText,
   GitBranchPlus,
   MessageSquarePlus,
   Pencil,
-  Puzzle,
   Share2,
-  Settings,
   Trash2,
 } from "lucide-react";
 import {
@@ -426,10 +427,8 @@ import {
   PreloadedViewSlot,
 } from "./ApplicationViewSlot";
 import { useApplicationNotificationQueue } from "./useApplicationNotificationQueue";
-import {
-  CodexAccountCard,
-  type AuthRowState,
-} from "../features/accounts/CodexAccountCard";
+import { RailAccountControl } from "../features/accounts/RailAccountControl";
+import type { AuthRowState } from "../features/accounts/CodexAccountCard";
 import type {
   CodexSkillSummary,
   ComposerContextFile,
@@ -598,7 +597,6 @@ import {
 import type { AppView } from "./types";
 import {
   APPLICATION_COMMAND_DEFINITIONS,
-  applicationCommandAriaShortcut,
   detectShortcutPlatform,
   formatApplicationCommandShortcut,
   type ApplicationCommand,
@@ -648,27 +646,6 @@ type KanbanChatGitContext =
       repositories: KanbanChatGitRepositoryState[];
     };
 
-type ChatGitTarget =
-  | {
-      kind: "workspace";
-      workspaceId: number;
-      workspacePath: string;
-      repositoryPath: string;
-      repositoryLabel: string;
-      branch: string | null;
-    }
-  | {
-      kind: "kanban-card";
-      workspaceId: number;
-      workspacePath: string;
-      chatId: number;
-      cardId: string;
-      repositoryPath: string;
-      repositoryLabel: string;
-      worktreePath: string;
-      branch: string;
-      binding: KanbanGitBinding;
-    };
 
 type TurnAccessValidationResult =
   | { ok: true }
@@ -926,7 +903,6 @@ function App() {
     setAccountHandoffCandidate,
   } = useAccountController();
   const {
-    prompt,
     promptRevision,
     promptRef,
     replaceComposerPrompt,
@@ -1029,6 +1005,7 @@ function App() {
   } = useWorkspaceController();
   const [kanbanChatGitContext, setKanbanChatGitContext] =
     useState<KanbanChatGitContext | null>(null);
+  const [gitTargetResolutionVersion, setGitTargetResolutionVersion] = useState(0);
   const kanbanChatGitContextRef = useRef<KanbanChatGitContext | null>(null);
   kanbanChatGitContextRef.current = kanbanChatGitContext;
   const gitDialogScopeRef = useRef<{
@@ -2555,7 +2532,7 @@ function App() {
     return () => {
       disposed = true;
     };
-  }, [selectedWorkspaceChatSession?.chatId]);
+  }, [selectedWorkspaceChatSession?.chatId, gitTargetResolutionVersion]);
   const gitStatusByWorkspaceId = useMemo(() => {
     const maps = new Map<number, Map<string, WorkspaceGitFileStatus>>();
     Object.entries(gitStatusStates).forEach(([workspaceId, state]) => {
@@ -2739,7 +2716,7 @@ function App() {
     [visibleGitOverview],
   );
   const selectedChatGitTarget = useMemo<ChatGitTarget | null>(() => {
-    if (!selectedWorkspace || !visibleGitRepository) return null;
+    if (!selectedWorkspace || !visibleGitRepository || selectedChatGitResolutionPending || selectedChatGitResolutionError) return null;
     if (selectedKanbanChatGitContext && selectedKanbanGitBinding) {
       return {
         kind: "kanban-card",
@@ -2765,6 +2742,8 @@ function App() {
     };
   }, [
     selectedBranch,
+    selectedChatGitResolutionPending,
+    selectedChatGitResolutionError,
     selectedKanbanChatGitContext,
     selectedKanbanGitBinding,
     selectedWorkspace,
@@ -11391,6 +11370,7 @@ function App() {
       if (selectedWorkspaceRef.current?.id === workspace.id) {
         setStatusMessage(successDetail);
       }
+      return { ok: true, commitCompleted };
     } catch (error) {
       await Promise.all([
         refreshWorkspaceAfterGitOperation(workspace),
@@ -11426,6 +11406,7 @@ function App() {
       if (selectedWorkspaceRef.current?.id === workspace.id) {
         setStatusMessage(failureDetail);
       }
+      return { ok: false, commitCompleted, error: failureDetail };
     } finally {
       gitOperationInFlightWorkspaceIdsRef.current.delete(workspace.id);
       clearRunningGitOperation(workspace.id);
@@ -20379,6 +20360,14 @@ function App() {
     setKeyboardShortcutsOpen(false);
     restoreShortcutOverlayFocus();
   });
+  const navigation = useActivityNavigation({
+    page: activeView, mode: sidebar.mode, setMode: sidebar.setMode,
+    setPage: (page) => { if (page === "plugins") setSelectedPluginId(null); setActiveView(page); },
+    closeAccount: () => setAccountMenuOpen(false),
+  });
+  const priorityUnreadCount = sidebar.priority.chats.filter(chat =>
+    !sidebarRunningChatActivity.has(chat.id) &&
+    (unreadCompletedChats[chat.workspace_id] ?? []).includes(chat.id)).length;
   const executeApplicationCommand = useStableEvent(
     (commandId: ApplicationCommandId) => {
       if (commandId === "command-palette") {
@@ -20404,11 +20393,15 @@ function App() {
 
       closeApplicationShortcutOverlays();
       if (commandId === "sidebar-chats") {
-        sidebar.setMode("chats");
+        navigation.select("chats", true);
       } else if (commandId === "sidebar-files") {
-        sidebar.setMode("files");
+        navigation.select("files", true);
       } else if (commandId === "sidebar-priority") {
-        sidebar.setMode("priority");
+        navigation.select("priority", true);
+      } else if (commandId === "toggle-sidebar") {
+        navigation.toggle();
+      } else if (commandId === "open-source-control") {
+        navigation.select("source-control");
       } else if (commandId === "new-chat") {
         setActiveView("task");
         changeWorkspaceSurfaceMode("chat");
@@ -20459,7 +20452,8 @@ function App() {
         return {
           ...definition,
           enabled:
-            !newChatUnavailable && (!stopCommand || visibleChatRun),
+            !newChatUnavailable && (!stopCommand || visibleChatRun) &&
+            (definition.id !== "toggle-sidebar" || activeView === "task"),
           shortcutEnabled:
             definition.id === "new-chat"
               ? true
@@ -20618,77 +20612,43 @@ function App() {
 
   return (
     <AsyncQuestionContext.Provider value={asyncQuestionsController}>
-    <main className="app-shell" data-tauri-drag-region={selfWindowDragRegion}>
-      <aside className="app-rail" data-tauri-drag-region={deepWindowDragRegion}>
-        <div
-          className="app-rail-titlebar-drag-region"
-          data-tauri-drag-region={selfWindowDragRegion}
-          aria-hidden="true"
-        />
-        <div
-          className="app-rail-brand"
-          data-tauri-drag-region={selfWindowDragRegion}
-        >
-          <OrchestratorBetaBrand />
-        </div>
-        <nav
-          className="primary-nav"
-          aria-label="Primary"
-          data-tauri-drag-region={selfWindowDragRegion}
-        >
-          <button
-            className={activeView === "analytics" ? "active" : ""}
-            type="button"
-            aria-keyshortcuts={applicationCommandAriaShortcut(
-              "open-analytics",
-              shortcutPlatform,
-            )}
-            data-tooltip={`Analytics (${formatApplicationCommandShortcut(
-              "open-analytics",
-              shortcutPlatform,
-            )})`}
-            onClick={() => setActiveView("analytics")}
-          >
-            <BarChart3 size={17} />
-            <span>Analytics</span>
-          </button>
-          <button
-            className={activeView === "settings" ? "active" : ""}
-            type="button"
-            aria-keyshortcuts={applicationCommandAriaShortcut(
-              "open-settings",
-              shortcutPlatform,
-            )}
-            data-tooltip={`Settings (${formatApplicationCommandShortcut(
-              "open-settings",
-              shortcutPlatform,
-            )})`}
-            onClick={() => setActiveView("settings")}
-          >
-            <Settings size={17} />
-            <span>Settings</span>
-          </button>
-          <button
-            className={activeView === "plugins" ? "active" : ""}
-            type="button"
-            aria-keyshortcuts={applicationCommandAriaShortcut(
-              "open-plugins",
-              shortcutPlatform,
-            )}
-            data-tooltip={`Plugins (${formatApplicationCommandShortcut(
-              "open-plugins",
-              shortcutPlatform,
-            )})`}
-            onClick={() => {
-              setSelectedPluginId(null);
-              setActiveView("plugins");
-            }}
-          >
-            <Puzzle size={17} />
-            <span>Plugins</span>
-          </button>
-        </nav>
-
+    <main className={`app-shell${navigation.sidebarVisible ? " has-sidebar" : ""}`} data-tauri-drag-region={selfWindowDragRegion}>
+      <header className="app-titlebar" data-tauri-drag-region={selfWindowDragRegion}>
+        <OrchestratorBetaBrand />
+      </header>
+      <ActivityRail selected={navigation.selected} panelOpen={navigation.sidebarVisible}
+        priorityCount={priorityUnreadCount} onSelect={navigation.select}
+        account={<RailAccountControl
+          model={{
+            authRow,
+            update: appUpdate,
+            signedIn: codexSignedIn,
+            menuOpen: accountMenuOpen,
+            accounts: codexAccounts,
+            selectedAccountId,
+            activeRunAccountIds,
+            runIsActive,
+            loginState,
+            showCancelLogin,
+            containerRef: accountMenuContainerRef,
+          }}
+          actions={{
+            setMenuOpen: setAccountMenuOpen,
+            selectAccount: (accountId) => void selectCodexAccount(accountId),
+            addAccount: () => void handleAddAccount(),
+            manageAccounts: () => {
+              setActiveView("settings");
+              setAccountMenuOpen(false);
+            },
+            refreshAccount: handleRefreshAccount,
+            reportBug: handleReportBug,
+            logout: handleLogout,
+            login: handleLogin,
+            cancelLogin: handleCancelLogin,
+          }}
+        />} />
+      <aside id="workspace-sidebar" className="workspace-sidebar" hidden={!navigation.sidebarVisible}
+        data-tauri-drag-region={deepWindowDragRegion}>
         <WorkspaceSidebar
           model={{
             mode: sidebar.mode,
@@ -20732,36 +20692,6 @@ function App() {
             openFile: (workspace, entry) => {
               void openWorkspaceFilePreview(workspace, entry);
             },
-          }}
-        />
-
-        <CodexAccountCard
-          model={{
-            authRow,
-            update: appUpdate,
-            signedIn: codexSignedIn,
-            menuOpen: accountMenuOpen,
-            accounts: codexAccounts,
-            selectedAccountId,
-            activeRunAccountIds,
-            runIsActive,
-            loginState,
-            showCancelLogin,
-            containerRef: accountMenuContainerRef,
-          }}
-          actions={{
-            setMenuOpen: setAccountMenuOpen,
-            selectAccount: (accountId) => void selectCodexAccount(accountId),
-            addAccount: () => void handleAddAccount(),
-            manageAccounts: () => {
-              setActiveView("settings");
-              setAccountMenuOpen(false);
-            },
-            refreshAccount: handleRefreshAccount,
-            reportBug: handleReportBug,
-            logout: handleLogout,
-            login: handleLogin,
-            cancelLogin: handleCancelLogin,
           }}
         />
       </aside>
@@ -21034,7 +20964,7 @@ function App() {
       ) : null}
 
       <section
-        className={`main ${activeView === "task" ? "task-main" : ""}`}
+        className={`main ${activeView === "task" ? "task-main" : activeView === "source-control" ? "source-control-main" : ""}`}
         data-tauri-drag-region={
           activeView === "task" ? selfWindowDragRegion : "false"
         }
@@ -21051,6 +20981,41 @@ function App() {
           onActivate={activateFloatingStatusNotice}
           onDismiss={dismissFloatingStatusNotice}
         />
+        <SourceControlView active={activeView === "source-control"}
+          activityVersion={[...activeRunRegistry.values()].map(control => `${control.clientId}:${control.runView.status}`).sort().join("|")}
+          workspaces={workspaces} workspace={selectedWorkspace} target={selectedChatGitTarget}
+          targetError={visibleGitStatusState?.error ?? null} targetLoading={selectedChatGitResolutionPending || visibleGitStatusState?.status === "loading"}
+          unresolvedTargetPath={selectedKanbanGitBinding?.worktreePath ?? selectedGitRepository?.gitRoot ?? null}
+          onRetryTarget={() => {
+            setGitTargetResolutionVersion(version => version + 1);
+            if (selectedWorkspace) void refreshWorkspaceAfterGitOperation(selectedWorkspace);
+          }}
+          repositories={selectedKanbanChatGitContext
+            ? selectedKanbanChatGitContext.repositories.map(item => ({
+                ...(item.repository ?? { workspacePath: selectedWorkspace?.path ?? "", gitRoot: item.binding.worktreePath,
+                  currentBranch: item.binding.cardBranch, aheadCount: 0, additions: 0, deletions: 0, hasUpstream: false, hasOrigin: false, canPush: false, files: [] }),
+                repository: { rootPath: item.binding.sourceRepositoryPath, relativePath: item.binding.relativePath,
+                  label: item.repository?.repository.label ?? item.binding.relativePath },
+              })) : selectedGitOverview?.repositories ?? []}
+          branches={branches} canManageBranches={selectedRepositoryTopology.kind === "single"}
+          busy={selectedGitActionStatus !== "idle" || branchCreationPendingWorkspaceId !== null}
+          resolvedTheme={resolvedTheme} accountId={selectedAccountId} model={selectedModel?.model ?? selectedModel?.id ?? null}
+          onWorkspace={id => { selectWorkspace(id); setActiveView("source-control"); }}
+          onRepository={path => { void selectGitRepository(path); }} onBranch={selectVisibleBranch} onCreateBranch={openBranchCreationDialog}
+          services={{
+            generate: generateCommitMessageForOperation,
+            execute: async request => {
+              const registered = registerWorkspaceGitOperation(request, request.kind === "push" ? "pushing" : "committing");
+              if (!registered) return { ok: false, commitCompleted: false, error: "Another Git operation is running for this workspace." };
+              return executeWorkspaceGitOperation(registered.workspace, request, registered.operationId);
+            },
+            refresh: async (workspace, target) => {
+              invalidateWorkspacePreviewCaches(target.kind === "kanban-card" ? { ...workspace, path: target.worktreePath } : workspace,
+                undefined, { reloadOpenPreview: true });
+              await Promise.all([refreshWorkspaceAfterGitOperation(workspace), refreshWorkspaceDirectoriesAfterRun(workspace),
+                refreshKanbanGitOperationTarget(gitOperationRequest(workspace, target))]);
+            },
+          }} />
         <DeferredViewSlot
           active={activeView === "task"}
           className="codex-workspace"
@@ -21135,7 +21100,7 @@ function App() {
                       model={{
                         disabled: kanbanCardCreatePending,
                         runActive: false,
-                        prompt,
+                        prompt: promptRef.current,
                         promptRevision,
                         submitLabel: "Create Kanban card",
                         accounts: signedInAccounts,
@@ -21327,7 +21292,7 @@ function App() {
                   model={{
                     disabled: !canRun || selectedGoalTerminationPending,
                     runActive: runIsActive,
-                    prompt,
+                    prompt: promptRef.current,
                     promptRevision,
                     accounts: signedInAccounts,
                     sharedCodexProfileAvailable: defaultProfileAuthenticated,

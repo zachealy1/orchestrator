@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { workspaceChatFixture } from "../../test/appRuntimeHarness";
 import type { Workspace, WorkspaceGitFileStatus } from "./types";
@@ -157,8 +157,7 @@ describe("sidebar modes", () => {
     expect(handlers.openChatContextMenu).toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(handlers.loadChats).toHaveBeenCalledWith(workspace, true);
-    fireEvent.click(screen.getByRole("button", { name: "Files" }));
-    expect(handlers.setMode).toHaveBeenCalledWith("files");
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
     expect(handlers.openFile).not.toHaveBeenCalled();
   });
 
@@ -191,11 +190,7 @@ describe("sidebar modes", () => {
     expect(
       screen.queryByRole("button", { name: "Expand app" }),
     ).not.toBeInTheDocument();
-    expect(
-      within(screen.getByRole("group", { name: "Sidebar mode" })).getAllByRole(
-        "button",
-      ),
-    ).toHaveLength(3);
+    expect(screen.queryByRole("group", { name: "Sidebar mode" })).not.toBeInTheDocument();
   });
 
   it("restores each mode's scroll position and exposes retry actions", () => {

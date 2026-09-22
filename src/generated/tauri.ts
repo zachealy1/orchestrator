@@ -49,6 +49,17 @@ export const commands = {
 	listWorkspaceGitStatus: (workspacePath: string, forceDiscovery: boolean | null) => __TAURI_INVOKE<WorkspaceGitOverview>("list_workspace_git_status", { workspacePath, forceDiscovery }),
 	readWorkspaceGitDiff: (workspacePath: string, repositoryPath: string | null, filePath: string) => __TAURI_INVOKE<WorkspaceGitDiff>("read_workspace_git_diff", { workspacePath, repositoryPath, filePath }),
 	undoWorkspaceGitDiff: (workspacePath: string, diff: string, pathStrip: number | null) => __TAURI_INVOKE<WorkspaceGitActionResult>("undo_workspace_git_diff", { workspacePath, diff, pathStrip }),
+	sourceControlStatus: (target: SourceControlTarget) => __TAURI_INVOKE<SourceControlStatus>("source_control_status", { target }),
+	sourceControlStage: (target: SourceControlTarget, paths: string[] | null, stage: boolean) => __TAURI_INVOKE<null>("source_control_stage", { target, paths, stage }),
+	sourceControlHistory: (target: SourceControlTarget, cursor: {
+	repositoryPath: string,
+	tips: string[],
+	refs: GitHistoryRef[],
+	offset: number,
+} | null) => __TAURI_INVOKE<GitHistoryPage>("source_control_history", { target, cursor }),
+	sourceControlCommit: (target: SourceControlTarget, sha: string) => __TAURI_INVOKE<GitCommitDetails>("source_control_commit", { target, sha }),
+	sourceControlCommitDiff: (target: SourceControlTarget, sha: string, path: string) => __TAURI_INVOKE<WorkspaceGitDiff>("source_control_commit_diff", { target, sha, path }),
+	sourceControlRemote: (target: SourceControlTarget, action: string) => __TAURI_INVOKE<string>("source_control_remote", { target, action }),
 	listWorkspaceDirectory: (workspacePath: string, directoryPath: string) => __TAURI_INVOKE<WorkspaceTreeEntry[]>("list_workspace_directory", { workspacePath, directoryPath }),
 	readWorkspaceFilePreview: (workspacePath: string, filePath: string) => __TAURI_INVOKE<WorkspaceFilePreview>("read_workspace_file_preview", { workspacePath, filePath }),
 	readWorkspaceFilePreviewChunk: (workspacePath: string, filePath: string, offset: number, version: string) => __TAURI_INVOKE<WorkspaceFilePreview>("read_workspace_file_preview_chunk", { workspacePath, filePath, offset, version }),
@@ -389,6 +400,45 @@ export type GitBranchList = {
 
 export type GitCheckoutResult = {
 	branch: string,
+};
+
+export type GitCommitDetails = {
+	commit: GitHistoryCommit,
+	parent: string | null,
+	files: GitCommitFile[],
+};
+
+export type GitCommitFile = {
+	path: string,
+	oldPath: string | null,
+	status: string,
+};
+
+export type GitHistoryCommit = {
+	sha: string,
+	parents: string[],
+	author: string,
+	date: string,
+	subject: string,
+	refs: string[],
+	isShallowBoundary: boolean,
+};
+
+export type GitHistoryCursor = {
+	repositoryPath: string,
+	tips: string[],
+	refs: GitHistoryRef[],
+	offset: number,
+};
+
+export type GitHistoryPage = {
+	commits: GitHistoryCommit[],
+	cursor: GitHistoryCursor | null,
+};
+
+export type GitHistoryRef = {
+	name: string,
+	sha: string,
 };
 
 export type GithubConnectionStatus = {
@@ -906,6 +956,18 @@ export type SetKanbanInheritedContextRequest = {
 	context: string,
 	expectedVersion: number,
 	operationId: string,
+};
+
+export type SourceControlStatus = {
+	repository: WorkspaceGitRepositoryStatus,
+	remotes: string[],
+	upstream: string | null,
+};
+
+export type SourceControlTarget = {
+	workspacePath: string,
+	repositoryPath: string,
+	binding: KanbanGitRepositoryBinding | null,
 };
 
 export type UpdateDelivery = "in-app" | "manual";

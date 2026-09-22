@@ -36,6 +36,7 @@ mod database;
 mod generated_images;
 mod goal_context;
 mod git;
+mod source_control;
 mod github;
 mod github_cli;
 mod gitlab_cli;
@@ -106,6 +107,12 @@ fn command_builder() -> tauri_specta::Builder<tauri::Wry> {
             list_workspace_git_status,
             read_workspace_git_diff,
             undo_workspace_git_diff,
+            source_control::source_control_status,
+            source_control::source_control_stage,
+            source_control::source_control_history,
+            source_control::source_control_commit,
+            source_control::source_control_commit_diff,
+            source_control::source_control_remote,
             list_workspace_directory,
             read_workspace_file_preview,
             read_workspace_file_preview_chunk,

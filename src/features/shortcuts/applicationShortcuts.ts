@@ -6,6 +6,8 @@ export type ApplicationCommandId =
   | "sidebar-chats"
   | "sidebar-files"
   | "sidebar-priority"
+  | "toggle-sidebar"
+  | "open-source-control"
   | "open-chat"
   | "open-kanban"
   | "open-analytics"
@@ -42,6 +44,15 @@ export type ApplicationCommand = ApplicationCommandDefinition & {
 };
 
 export const APPLICATION_COMMAND_DEFINITIONS: ApplicationCommandDefinition[] = [
+  {
+    id: "toggle-sidebar", label: "Toggle sidebar", description: "Show or hide the workspace sidebar",
+    group: "Navigation", keywords: ["sidebar", "collapse", "expand"],
+    shortcut: shortcut("KeyB", "b", "B", "B"), showInPalette: true,
+  },
+  {
+    id: "open-source-control", label: "Open Source control", description: "Stage files, inspect history, and synchronize Git",
+    group: "Navigation", keywords: ["git", "source", "control", "commit", "history"], shortcut: null, showInPalette: true,
+  },
   {
     id: "new-chat",
     label: "New chat",

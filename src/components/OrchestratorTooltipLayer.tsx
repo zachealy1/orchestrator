@@ -13,7 +13,7 @@ const TOOLTIP_VIEWPORT_GUTTER_PX = 8;
 const TOOLTIP_POINTER_DELAY_MS = 180;
 const TOOLTIP_EXIT_MS = 120;
 
-type TooltipPlacement = "above" | "below";
+type TooltipPlacement = "above" | "below" | "right";
 
 type ActiveTooltip = {
   trigger: HTMLButtonElement;
@@ -43,7 +43,7 @@ function relatedTargetIsInside(
 
 function preferredPlacement(trigger: HTMLButtonElement): TooltipPlacement | null {
   const placement = trigger.dataset.tooltipPlacement;
-  return placement === "above" || placement === "below" ? placement : null;
+  return placement === "above" || placement === "below" || placement === "right" ? placement : null;
 }
 
 export function OrchestratorTooltipLayer() {
@@ -160,7 +160,7 @@ export function OrchestratorTooltipLayer() {
       viewportHeight - triggerBounds.bottom >=
       tooltipBounds.height + TOOLTIP_GAP_PX;
     const placement =
-      requestedPlacement === "above" && fitsAbove
+      requestedPlacement === "right" ? "right" : requestedPlacement === "above" && fitsAbove
         ? "above"
         : requestedPlacement === "below" && fitsBelow
           ? "below"
@@ -168,7 +168,7 @@ export function OrchestratorTooltipLayer() {
             ? "above"
             : "below";
     const unclampedLeft =
-      triggerBounds.left + triggerBounds.width / 2 - tooltipBounds.width / 2;
+      placement === "right" ? triggerBounds.right + TOOLTIP_GAP_PX : triggerBounds.left + triggerBounds.width / 2 - tooltipBounds.width / 2;
     const maxLeft = Math.max(
       TOOLTIP_VIEWPORT_GUTTER_PX,
       viewportWidth - tooltipBounds.width - TOOLTIP_VIEWPORT_GUTTER_PX,
@@ -178,7 +178,7 @@ export function OrchestratorTooltipLayer() {
       maxLeft,
     );
     const unclampedTop =
-      placement === "above"
+      placement === "right" ? triggerBounds.top + (triggerBounds.height - tooltipBounds.height) / 2 : placement === "above"
         ? triggerBounds.top - tooltipBounds.height - TOOLTIP_GAP_PX
         : triggerBounds.bottom + TOOLTIP_GAP_PX;
     const maxTop = Math.max(

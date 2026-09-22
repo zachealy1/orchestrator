@@ -1,0 +1,89 @@
+.app-shell > .source-control-main { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.source-control-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; background: var(--panel); }
+.source-control-view[hidden] { display: none; }
+.source-control-view button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 5px; box-shadow: none; transform: none; font-size: 12px; }
+.source-control-view button:focus-visible, .source-control-view select:focus-visible, .source-control-view textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.source-control-view button:hover:not(:disabled) { background: var(--panel-strong); color: var(--text); }
+.source-control-view button { font-weight: 450; min-height: 0; }
+.sc-target .workspace-branch-select { min-width: 230px; max-width: 340px; }
+.sc-header { display: flex; align-items: center; gap: 24px; padding: 16px 22px 12px; min-width: 0; }
+.sc-heading { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+.sc-heading h1 { font-size: 17px; font-weight: 550; letter-spacing: -.35px; margin: 0; }
+.sc-heading svg { color: var(--muted); }
+.sc-selectors { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sc-selectors select { max-width: 220px; font-size: 12px; padding: 6px 10px; }
+.sc-sync-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+.sc-sync-actions button { padding: 7px 10px; background: transparent; border: 1px solid var(--color-divider); }
+.sc-target { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 22px 13px; font-size: 12px; color: var(--muted); }
+.sc-target > svg { color: var(--accent); flex-shrink: 0; }
+.sc-target strong { color: var(--text); font-weight: 500; white-space: nowrap; }
+.sc-target select { padding: 3px 5px; font-size: 12px; max-width: 240px; background: transparent; border: 0; }
+.sc-target > button { padding: 3px; background: transparent; }
+.sc-target > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; margin-left: 4px; }
+.sc-worktree-tag { font-size: 10px; border: 1px solid var(--color-divider); border-radius: 3px; padding: 2px 5px; flex-shrink: 0; }
+.sc-tab-bar { display: flex; flex-shrink: 0; gap: 18px; padding: 0 22px; border-bottom: 1px solid var(--color-divider); }
+.sc-tab-bar > button { position: relative; border: 0; background: transparent; color: var(--muted); padding: 10px 0; border-radius: 0; }
+.sc-tab-bar > button[aria-selected="true"] { color: var(--text); }
+.sc-tab-bar > button[aria-selected="true"]::after { content: ""; position: absolute; height: 2px; background: var(--accent); bottom: -1px; left: 0; right: 0; }
+.sc-tab-bar > button span { font-size: 10px; border-radius: 4px; padding: 0 5px; background: var(--panel-strong); }
+.sc-tab-bar > span { align-self: center; color: var(--muted); margin-left: auto; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-notice { display: flex; gap: 12px; align-items: center; padding: 9px 18px; font-size: 12px; flex-shrink: 0; max-height: 100px; overflow: auto; overflow-wrap: anywhere; }
+.sc-notice button { margin-left: auto; flex-shrink: 0; }
+.sc-error { color: var(--danger, #e29292); background: rgba(160, 60, 60, .08); }
+.sc-empty { display: flex; flex: 1; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px; gap: 10px; color: var(--muted); font-size: 13px; min-height: 0; }
+.sc-empty p { margin: 0; }
+.sc-changes, .sc-commit-details { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 0; flex: 1; }
+.sc-file-panel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-right: 1px solid var(--color-divider); background: var(--rail); }
+.sc-commit-composer { padding: 16px; border-bottom: 1px solid var(--color-divider); display: flex; flex-direction: column; gap: 8px; }
+.sc-commit-composer label { font-size: 11px; color: var(--muted); }
+.sc-commit-composer textarea { min-height: 76px; max-height: 160px; resize: vertical; padding: 9px 10px; font-size: 12px; border-radius: 5px; background: var(--panel); line-height: 1.5; }
+.sc-commit-options { display: flex; align-items: center; justify-content: space-between; color: var(--muted); }
+.sc-commit-options small { font-size: 10px; }
+.sc-commit-options button { padding: 3px; background: transparent; border: 0; }
+.sc-commit-actions { display: flex; gap: 6px; }
+.sc-commit-actions button { padding: 7px 8px; flex: 1; white-space: nowrap; font-size: 11px; }
+.sc-commit-actions .sc-primary { background: var(--accent); color: var(--color-button-primary-text); border-color: transparent; }
+.sc-push { padding: 5px 8px; background: transparent; }
+.sc-files-toolbar { display: flex; gap: 7px; padding: 11px 12px; font-size: 10px; color: var(--muted); align-items: center; }
+.sc-files-toolbar span { margin-right: auto; }
+.sc-files-toolbar button { padding: 0; background: transparent; border: 0; font-size: 10px; }
+.sc-file-groups { overflow: auto; min-height: 0; flex: 1; padding-bottom: 12px; }
+.sc-file-groups h2 { display: flex; gap: 7px; margin: 0; padding: 9px 14px 7px; font-size: 11px; font-weight: 550; color: var(--muted); }
+.sc-file-groups h2 span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.sc-file-row { display: flex; min-width: 0; padding-right: 8px; }
+.source-control-view .sc-file-select { display: flex; flex: 1; width: 100%; min-width: 0; text-align: left; justify-content: flex-start; padding: 7px 14px; border: 0; border-radius: 0; background: transparent; color: var(--text); gap: 9px; font-size: 12px; }
+.sc-file-select > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-file-select[aria-pressed="true"], .sc-commit-row[aria-pressed="true"] { background: var(--panel-strong) !important; }
+.sc-file-select:hover, .sc-commit-row:hover { background: var(--panel-strong) !important; }
+.sc-file-badge { color: var(--muted); width: 10px; flex: 0 0 10px; font: 10px ui-monospace, monospace; }
+.sc-status-added, .sc-status-untracked { color: #82bea0; }
+.sc-status-deleted, .sc-status-conflicted { color: #de9292; }
+.sc-status-modified { color: #dfb877; }
+.sc-status-renamed { color: #92b9de; }
+.sc-file-action { flex: 0 0 24px; width: 24px; background: transparent; border: 0; padding: 4px; color: var(--muted); }
+.sc-conflict-help, .sc-muted { font-size: 11px; color: var(--muted); margin: 8px 14px; }
+.sc-clean { color: var(--muted); font-size: 12px; text-align: center; padding: 30px 12px; }
+.sc-diff-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.sc-diff-heading { display: flex; align-items: center; gap: 16px; min-height: 43px; padding: 6px 16px; border-bottom: 1px solid var(--color-divider); }
+.sc-diff-heading > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 11px ui-monospace, monospace; }
+.sc-layout-picker { margin-left: auto; flex-shrink: 0; display: flex; padding: 2px; border: 1px solid var(--color-divider); border-radius: 5px; }
+.sc-layout-picker button { font-size: 10px; background: transparent; border: 0; padding: 3px 7px; color: var(--muted); }
+.sc-layout-picker button[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); }
+.sc-diff-panel .diff-preview { flex: 1; min-height: 0; border: 0; border-radius: 0; }
+.sc-history { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.sc-history-graph { display: flex; flex-direction: column; flex: 0 0 45%; min-height: 140px; max-height: 50%; border-bottom: 1px solid var(--color-divider); overflow: auto; }
+.sc-history-heading, .source-control-view .sc-commit-row { display: grid; gap: 0; align-items: center; min-width: 650px; padding: 0 18px 0 10px; text-align: left; }
+.sc-history-heading { height: 30px; flex-shrink: 0; color: var(--muted); font-size: 10px; border-bottom: 1px solid var(--color-divider); }
+.sc-commit-list { flex: 1; min-height: 0; }
+.source-control-view .sc-commit-row { border: 0; border-radius: 0; background: transparent; height: 38px; width: 100%; color: var(--text); font-size: 12px; }
+.sc-commit-row > span, .sc-commit-row > time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-commit-row > span:not(.sc-commit-subject), .sc-commit-row time, .sc-commit-row code { color: var(--muted); font-size: 11px; padding-right: 8px; }
+.sc-commit-subject { display: flex; align-items: center; gap: 7px; padding-right: 15px; }
+.sc-commit-subject > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.sc-ref { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--color-divider); color: var(--muted); border-radius: 3px; font-size: 10px; padding: 1px 5px; max-width: 200px; overflow: hidden; flex-shrink: 0; }
+.sc-head-ref { color: var(--accent); }
+.sc-commit-info { display: flex; flex-direction: column; gap: 5px; padding: 14px 16px; border-bottom: 1px solid var(--color-divider); font-size: 11px; overflow-wrap: anywhere; flex-shrink: 0; max-height: 132px; overflow: auto; }
+.sc-commit-info strong { font-size: 12px; font-weight: 500; }
+.sc-commit-info span, .sc-commit-info code, .sc-commit-info small { color: var(--muted); }
+.sc-load-more { width: 100%; padding: 8px; background: transparent; border: 0; }
+.sc-history-end { padding: 7px 16px; font-size: 10px; color: var(--muted); text-align: center; }

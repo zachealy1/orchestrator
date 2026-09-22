@@ -1,6 +1,6 @@
 import { sidebarChats } from "./test/appRuntimeHarness";
 import { openSidebarChats } from "./test/appRuntimeHarness";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, beforeEach, expect, it, vi } from "vitest";
 import {
   getMocks,
@@ -382,8 +382,8 @@ describe("Application runtime scenarios 5", () => {
       await renderApp();
 
       const accountButton = await screen.findByLabelText("Codex account");
-      expect(within(accountButton).getByText("dev@example.com")).toBeInTheDocument();
-      expect(within(accountButton).getByText("Pro")).toBeInTheDocument();
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("dev@example.com")));
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("Pro")));
       expect(screen.queryByLabelText("Log out of Codex")).not.toBeInTheDocument();
     });
 
@@ -427,6 +427,7 @@ describe("Application runtime scenarios 5", () => {
       mocks.readAgentNotificationPermissionStatusMock.mockResolvedValue("allowed");
       const { user } = await renderApp();
 
+      await user.click(screen.getByLabelText("Codex account"));
       expect(await screen.findByText("Sign in to Codex")).toBeInTheDocument();
       window.dispatchEvent(new Event("blur"));
       await user.click(screen.getByLabelText("Sign in to Codex"));
@@ -438,7 +439,7 @@ describe("Application runtime scenarios 5", () => {
       expect(await screen.findByText("Waiting for browser sign-in")).toBeInTheDocument();
       expect(screen.getByText("Click to cancel")).toBeInTheDocument();
       expect(screen.getByLabelText("Cancel Codex sign-in")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Codex account")).toBeInTheDocument();
       await waitFor(() =>
         expect(mocks.sendAgentNotificationMock).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -460,6 +461,7 @@ describe("Application runtime scenarios 5", () => {
       );
 
       const { user } = await renderApp();
+      await user.click(screen.getByLabelText("Codex account"));
       await user.click(screen.getByLabelText("Sign in to Codex"));
 
       expect(await screen.findByText("Sign-in failed")).toBeInTheDocument();
@@ -478,6 +480,7 @@ describe("Application runtime scenarios 5", () => {
       });
 
       const { user } = await renderApp();
+      await user.click(screen.getByLabelText("Codex account"));
       await user.click(screen.getByLabelText("Sign in to Codex"));
 
       await waitFor(() =>
@@ -491,8 +494,9 @@ describe("Application runtime scenarios 5", () => {
       );
       expect(mocks.deleteCodexProfileMock).toHaveBeenCalledWith(7);
       expect(mocks.softDeleteCodexAccountMock).toHaveBeenCalledWith(7);
+      await user.click(screen.getByLabelText("Codex account"));
       expect(await screen.findByText("Sign in to Codex")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Codex account")).toBeInTheDocument();
     });
 
   it("completes sign-in from notifications and supports logout", async () => {
@@ -507,6 +511,7 @@ describe("Application runtime scenarios 5", () => {
         });
 
       const { user } = await renderApp();
+      await user.click(screen.getByLabelText("Codex account"));
       await user.click(screen.getByLabelText("Sign in to Codex"));
 
       const notificationHandler = mocks.listeners.get("codex:notification");
@@ -528,10 +533,10 @@ describe("Application runtime scenarios 5", () => {
       });
 
       const accountButton = await screen.findByLabelText("Codex account");
-      expect(within(accountButton).getByText("dev@example.com")).toBeInTheDocument();
-      expect(within(accountButton).getByText("Pro")).toBeInTheDocument();
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("dev@example.com")));
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("Pro")));
 
-      await user.click(accountButton);
+      if (accountButton.getAttribute("aria-expanded") !== "true") await user.click(accountButton);
       expect(await screen.findByLabelText("Log out of Codex")).toBeInTheDocument();
       expect(screen.getByText("Refresh account")).toBeInTheDocument();
       expect(screen.queryByLabelText("Stop Codex")).not.toBeInTheDocument();
@@ -539,8 +544,9 @@ describe("Application runtime scenarios 5", () => {
 
       await user.click(screen.getByLabelText("Log out of Codex"));
       await waitFor(() => expect(mocks.logoutCodexAccountMock).toHaveBeenCalledWith(7));
+      await user.click(screen.getByLabelText("Codex account"));
       expect(await screen.findByText("Sign in to Codex")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Codex account")).toBeInTheDocument();
     });
 
   it("opens bug reporting from the account menu and reports launch failures", async () => {
@@ -577,6 +583,7 @@ describe("Application runtime scenarios 5", () => {
         });
 
       const { user } = await renderApp();
+      await user.click(screen.getByLabelText("Codex account"));
       await user.click(screen.getByLabelText("Sign in to Codex"));
 
       await waitFor(() => expect(mocks.openUrlMock).toHaveBeenCalledWith("https://example.com/auth"));
@@ -586,8 +593,8 @@ describe("Application runtime scenarios 5", () => {
         {},
         { timeout: 3500 },
       );
-      expect(within(accountButton).getByText("poll@example.com")).toBeInTheDocument();
-      expect(within(accountButton).getByText("Plus")).toBeInTheDocument();
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("poll@example.com")), { timeout: 3500 });
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("Plus")));
     });
 
   it("refreshes account state from account/updated notifications", async () => {
@@ -607,6 +614,8 @@ describe("Application runtime scenarios 5", () => {
         });
 
       await renderApp();
+      await waitFor(() => expect(mocks.readCodexAccountMock).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); });
 
       const notificationHandler = mocks.listeners.get("codex:notification");
       expect(notificationHandler).toBeDefined();
@@ -627,8 +636,8 @@ describe("Application runtime scenarios 5", () => {
       });
 
       const accountButton = await screen.findByLabelText("Codex account");
-      expect(within(accountButton).getByText("updated@example.com")).toBeInTheDocument();
-      expect(within(accountButton).getByText("Plus")).toBeInTheDocument();
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("updated@example.com")));
+      await waitFor(() => expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining("Plus")));
     });
 
   it("adds a second isolated account from the account menu", async () => {
@@ -670,6 +679,7 @@ describe("Application runtime scenarios 5", () => {
 
       const { user } = await renderApp();
 
+      fireEvent.click(screen.getByLabelText("Codex account"));
       expect(await screen.findByText("Waiting for browser sign-in")).toBeInTheDocument();
       expect(mocks.startCodexLoginMock).not.toHaveBeenCalled();
       expect(mocks.openUrlMock).toHaveBeenCalledWith(
@@ -711,6 +721,7 @@ describe("Application runtime scenarios 5", () => {
 
       await renderApp();
 
+      fireEvent.click(screen.getByLabelText("Codex account"));
       expect(await screen.findByText("Waiting for browser sign-in")).toBeInTheDocument();
       expect(mocks.startCodexLoginMock).not.toHaveBeenCalled();
       expect(mocks.openUrlMock).toHaveBeenCalledWith(
@@ -779,7 +790,8 @@ describe("Application runtime scenarios 5", () => {
       expect(menu).toBeInTheDocument();
       expect(menu).toHaveClass("account-menu");
       expect(accountButton).toHaveAttribute("aria-expanded", "true");
-      expect(accountButton.closest(".account-card")).toContainElement(menu);
+      expect(screen.getByRole("dialog", { name: "Account" })).toContainElement(menu);
+      expect(accountButton.closest(".rail-account-control")).not.toContainElement(menu);
     });
 
   it("closes the account actions popover when clicking elsewhere on the screen", async () => {
@@ -904,9 +916,7 @@ describe("Application runtime scenarios 5", () => {
       );
 
       const accountButton = await screen.findByLabelText("Codex account");
-      expect(
-        within(accountButton).getByText(signedInAccount.email),
-      ).toBeInTheDocument();
+      expect(accountButton).toHaveAttribute("data-tooltip", expect.stringContaining(signedInAccount.email));
       await user.click(accountButton);
       expect(screen.queryByLabelText("Codex accounts")).not.toBeInTheDocument();
     });
@@ -930,7 +940,7 @@ describe("Application runtime scenarios 5", () => {
 
       await renderApp();
       const selectedButton = await screen.findByLabelText("Codex account");
-      expect(within(selectedButton).getByText("dev@example.com")).toBeInTheDocument();
+      await waitFor(() => expect(selectedButton).toHaveAttribute("data-tooltip", expect.stringContaining("dev@example.com")));
 
       await act(async () => {
         mocks.listeners.get("codex:notification")?.({
@@ -944,10 +954,8 @@ describe("Application runtime scenarios 5", () => {
         });
       });
 
-      expect(within(selectedButton).getByText("dev@example.com")).toBeInTheDocument();
-      expect(
-        within(selectedButton).queryByText("updated-personal@example.com"),
-      ).not.toBeInTheDocument();
+      await waitFor(() => expect(selectedButton).toHaveAttribute("data-tooltip", expect.stringContaining("dev@example.com")));
+      expect(selectedButton).not.toHaveAttribute("data-tooltip", expect.stringContaining("updated-personal@example.com"));
     });
 
   it("removes only the selected managed account profile", async () => {

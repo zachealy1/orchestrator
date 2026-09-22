@@ -33,11 +33,12 @@ describe("Application runtime scenarios 1", () => {
 
       const { user } = await renderApp();
 
+      await user.click(await screen.findByLabelText("Codex account"));
       const signIn = await screen.findByLabelText("Sign in to Codex");
       expect(signIn).toHaveTextContent("Sign in to Codex");
       expect(signIn.querySelector(".account-avatar")).not.toBeInTheDocument();
       expect(signIn).not.toHaveAttribute("aria-expanded");
-      expect(screen.queryByLabelText("Codex account")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Codex account")).toHaveAttribute("aria-expanded", "true");
       expect(screen.queryByLabelText("Connect Codex")).not.toBeInTheDocument();
       expect(screen.queryByText("Refresh")).not.toBeInTheDocument();
 
@@ -58,10 +59,8 @@ describe("Application runtime scenarios 1", () => {
 
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Files" }));
-      const primaryNav = screen.getByRole("navigation", {
-        name: "Primary",
-      });
-      const appRailBrand = document.querySelector(".app-rail-brand");
+      const primaryNav = screen.getByRole("complementary", { name: "Activity bar" });
+      const appRailBrand = document.querySelector(".app-titlebar");
       const betaBrand = screen.getByLabelText("Orchestrator beta");
       expect(appRailBrand).toContainElement(betaBrand);
       expect(appRailBrand?.nextElementSibling).toBe(primaryNav);
@@ -75,7 +74,7 @@ describe("Application runtime scenarios 1", () => {
         name: "Files",
       });
       expect(
-        within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+        within(workspaceNav).getByRole("button", { name: "orchestrator", hidden: true }),
       ).toBeInTheDocument();
       const secondWorkspaceButton = within(workspaceNav).getByRole("button", {
         name: "mobile-client",
@@ -98,11 +97,12 @@ describe("Application runtime scenarios 1", () => {
       await user.click(within(primaryNav).getByRole("button", { name: "Analytics" }));
       await waitFor(() => expect(screen.queryByLabelText("Task composer")).not.toBeInTheDocument());
       expect(
-        within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+        within(workspaceNav).getByRole("button", { name: "orchestrator", hidden: true }),
       ).not.toHaveAttribute("aria-current");
       expect(screen.queryByLabelText("Run history")).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Codex run console")).not.toBeInTheDocument();
 
+      await user.click(screen.getByRole("button", { name: "Files" }));
       await user.click(secondWorkspaceButton);
       expect(secondWorkspaceButton).toHaveAttribute("aria-current", "page");
       expect(screen.getByLabelText("Task composer")).toBeInTheDocument();
@@ -196,7 +196,7 @@ describe("Application runtime scenarios 1", () => {
 
       expect(mocks.softDeleteWorkspaceMock).not.toHaveBeenCalled();
       expect(
-        within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+        within(workspaceNav).getByRole("button", { name: "orchestrator", hidden: true }),
       ).toBeInTheDocument();
     });
 
@@ -220,11 +220,11 @@ describe("Application runtime scenarios 1", () => {
       );
       await user.type(screen.getByLabelText("Prompt"), "Remember this draft");
       await user.click(
-        within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+        within(workspaceNav).getByRole("button", { name: "orchestrator", hidden: true }),
       );
 
       fireEvent.contextMenu(
-        within(workspaceNav).getByRole("button", { name: "orchestrator" }),
+        within(workspaceNav).getByRole("button", { name: "orchestrator", hidden: true }),
         { clientX: 60, clientY: 140 },
       );
       await user.click(

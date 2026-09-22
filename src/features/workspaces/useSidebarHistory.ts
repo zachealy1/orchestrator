@@ -231,7 +231,7 @@ export function useSidebarHistory(input: {
         (w) =>
           mode === "priority" || (mode === "chats" && expandedChats.has(w.id)),
       );
-      if (mode === "priority") await refreshPriority();
+      await refreshPriority();
       await Promise.all(
         visible.map(async (workspace) => {
           if (mode === "chats") await refreshWorkspace(workspace);
@@ -292,7 +292,6 @@ export function useSidebarHistory(input: {
     );
   }, [workspaceKey]);
   useEffect(() => {
-    if (mode !== "priority") return;
     const expiry = Math.min(
       ...priority.chats
         .map((chat) => Date.parse(chat.latest_finished_at) + PRIORITY_WINDOW_MS)

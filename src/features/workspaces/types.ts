@@ -113,7 +113,7 @@ export type WorkspaceGitActionResult = {
 };
 
 export type WorkspaceGitDiffSection = {
-  kind: "staged" | "unstaged" | "untracked";
+  kind: "staged" | "unstaged" | "untracked" | "commit";
   title: string;
   baseLabel: string;
   headLabel: string;

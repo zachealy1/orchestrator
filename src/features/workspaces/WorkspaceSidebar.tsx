@@ -2,13 +2,10 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
-  Clock3,
-  Files,
   FileText,
   Folder,
   FolderOpen,
   Loader2,
-  MessageCircle,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -35,10 +32,6 @@ import type {
 import type { ChatListItem } from "../conversations/types";
 import { WorkspaceHistoryRow } from "../conversations/WorkspaceHistoryRow";
 import { sortHistoryChatsByActivity } from "../conversations/historyProjection";
-import {
-  applicationCommandAriaShortcut,
-  formatApplicationCommandShortcut,
-} from "../shortcuts/applicationShortcuts";
 import type { SidebarMode } from "./sidebarPreferences";
 import type {
   SidebarHistoryState,
@@ -445,30 +438,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 
   return (
     <div className="rail-section">
-      <div
-        className="sidebar-mode-selector"
-        role="group"
-        aria-label="Sidebar mode"
-        data-tauri-drag-region="false"
-      >
-        {([
-          ["chats", "Chats", MessageCircle, "sidebar-chats"],
-          ["files", "Files", Files, "sidebar-files"],
-          ["priority", "Priority", Clock3, "sidebar-priority"],
-        ] as const).map(([mode, label, Icon, commandId]) => (
-          <button
-            key={mode}
-            type="button"
-            aria-label={label}
-            data-tooltip={`${label} (${formatApplicationCommandShortcut(commandId)})`}
-            aria-keyshortcuts={applicationCommandAriaShortcut(commandId)}
-            aria-pressed={model.mode === mode}
-            onClick={() => actions.setMode(mode)}
-          >
-            <Icon size={18} aria-hidden="true" />
-          </button>
-        ))}
-      </div>
       <div
         className="rail-section-header"
         data-tauri-drag-region={model.headerDragRegion}

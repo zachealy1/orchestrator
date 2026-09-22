@@ -51,11 +51,14 @@ export type CodexAccountCardActions = {
 export const CodexAccountCard = memo(function CodexAccountCard({
   model,
   actions,
+  embedded = false,
 }: {
   model: CodexAccountCardModel;
   actions: CodexAccountCardActions;
+  embedded?: boolean;
 }) {
   const { authRow } = model;
+  const Trigger = embedded ? "div" : "button";
   return (
     <div
       className={`codex-card account-card auth-${authRow.tone}`}
@@ -64,13 +67,13 @@ export const CodexAccountCard = memo(function CodexAccountCard({
     >
       {model.signedIn ? (
         <>
-          <button
+          <Trigger
             className={`account-trigger secondary ${model.menuOpen ? "open" : ""}`}
             type="button"
-            onClick={() => actions.setMenuOpen(!model.menuOpen)}
-            aria-expanded={model.menuOpen}
-            aria-controls="codex-account-menu"
-            aria-label="Codex account"
+            onClick={embedded ? undefined : () => actions.setMenuOpen(!model.menuOpen)}
+            aria-expanded={embedded ? undefined : model.menuOpen}
+            aria-controls={embedded ? undefined : "codex-account-menu"}
+            aria-label={embedded ? undefined : "Codex account"}
           >
             <span className="account-avatar" aria-hidden="true">
               {authRow.avatarLabel}
@@ -81,7 +84,7 @@ export const CodexAccountCard = memo(function CodexAccountCard({
             </span>
             <ChevronDown className="account-chevron" size={18} />
             {model.update?.state.version && <span className="account-update-indicator" aria-label="App update available" />}
-          </button>
+          </Trigger>
           {model.menuOpen ? (
             <div className="account-menu" id="codex-account-menu">
               {model.accounts.length > 1 ? (

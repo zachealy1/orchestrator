@@ -77,6 +77,7 @@ pub(crate) fn checkout_git_branch_blocking(
     path: String,
     branch: String,
 ) -> Result<GitCheckoutResult, String> {
+    let _guard = crate::source_control::acquire_git_mutation(Path::new(&path))?;
     if branch.trim().is_empty() {
         return Err("Choose a branch before switching".to_string());
     }
@@ -132,6 +133,7 @@ pub(crate) fn create_git_branch_blocking(
     let workspace = canonical_workspace(&path)?;
     let git_root = resolve_git_root(&workspace)?;
     let git_root_arg = git_root.to_string_lossy();
+    let _guard = crate::source_control::acquire_git_mutation(&git_root)?;
     let format_probe = run_command(
         "git",
         &[
@@ -224,6 +226,7 @@ pub(crate) fn commit_workspace_repository_changes_blocking(
     let workspace = canonical_workspace(&workspace_path)?;
     let repository = resolve_workspace_git_repository(&workspace, repository_path.as_deref())?;
     let git_root = repository.root.clone();
+    let _guard = crate::source_control::acquire_git_mutation(&git_root)?;
     let pathspecs = discover_repository_pathspecs(&workspace, &repository)?;
 
     if include_unstaged {
@@ -1440,6 +1443,7 @@ pub(crate) fn push_workspace_repository_branch_blocking(
 ) -> Result<WorkspaceGitActionResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_workspace_git_repository(&workspace, repository_path.as_deref())?.root;
+    let _guard = crate::source_control::acquire_git_mutation(&git_root)?;
     let branch = current_git_branch(&git_root)
         .ok_or_else(|| "Cannot push while detached from a branch".to_string())?;
     let root_arg = git_root.to_string_lossy();
@@ -1805,6 +1809,7 @@ pub(crate) fn undo_workspace_git_diff_with_path_strip_blocking(
 ) -> Result<WorkspaceGitActionResult, String> {
     let workspace = canonical_workspace(&workspace_path)?;
     let git_root = resolve_git_root(&workspace)?;
+    let _guard = crate::source_control::acquire_git_mutation(&git_root)?;
     if diff.trim().is_empty() {
         return Err("No saved edit diff is available to undo".to_string());
     }

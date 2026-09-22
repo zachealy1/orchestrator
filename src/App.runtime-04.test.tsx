@@ -1311,9 +1311,7 @@ describe("Application runtime scenarios 4", () => {
 
       const { user } = await renderApp();
       await user.click(screen.getByRole("button", { name: "Files" }));
-      const primaryNav = screen.getByRole("navigation", {
-        name: "Primary",
-      });
+      const primaryNav = screen.getByRole("complementary", { name: "Activity bar" });
       const workspaceNav = screen.getByRole("navigation", {
         name: "Files",
       });
@@ -1334,9 +1332,9 @@ describe("Application runtime scenarios 4", () => {
 
       await user.click(within(primaryNav).getByRole("button", { name: "Settings" }));
       expect(workspaceButton).not.toHaveAttribute("aria-current");
-      expect(within(workspaceNav).getByRole("button", { name: "src" })).toBeInTheDocument();
+      expect(workspaceNav).not.toBeVisible();
 
-      await user.click(workspaceButton);
+      await user.click(screen.getByRole("button", { name: "Files" }));
       expect(screen.getByLabelText("Task composer")).toBeInTheDocument();
       expect(workspaceButton).toHaveAttribute("aria-current", "page");
       expect(within(workspaceNav).getByRole("button", { name: "src" })).toBeInTheDocument();

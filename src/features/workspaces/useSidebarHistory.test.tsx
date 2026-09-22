@@ -131,12 +131,12 @@ describe("sidebar history controller", () => {
     expect(result.current.histories[1].status).toBe("loaded");
   });
 
-  it("queries Priority without expanding workspaces, refreshes on activity and focus, and expires exactly at 24 hours", async () => {
+  it.each(["priority", "chats", "files"])("keeps Priority eligibility current in %s mode on activity, focus, and 24-hour expiry", async (mode) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-12T12:00:00Z"));
     localStorage.setItem(
       SIDEBAR_STORAGE_KEY,
-      JSON.stringify({ mode: "priority" }),
+      JSON.stringify({ mode }),
     );
     const props = {
       ...input(),
@@ -167,7 +167,8 @@ describe("sidebar history controller", () => {
       window.dispatchEvent(new Event("focus"));
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(props.syncWorkspace).toHaveBeenCalledWith(second);
+    if (mode === "priority") expect(props.syncWorkspace).toHaveBeenCalledWith(second);
+    else expect(props.syncWorkspace).not.toHaveBeenCalled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });

@@ -1980,7 +1980,8 @@ export {
 export type { PromptQueueItem, RunListItem };
 
 export async function openSidebarChats(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Chats" }));
+  const chats = screen.getByRole("button", { name: "Chats" });
+  if (chats.getAttribute("aria-expanded") !== "true") await user.click(chats);
   const activeRoot = document.querySelector(".workspace-root-row.active");
   const toggle = activeRoot?.querySelector<HTMLButtonElement>(".workspace-tree-chevron");
   if (toggle?.getAttribute("aria-expanded") === "false") await user.click(toggle);
