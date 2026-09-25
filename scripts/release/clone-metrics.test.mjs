@@ -117,6 +117,30 @@ test("history survives the rolling window, backfills recoverable gaps and keeps 
   assert.match(renderCloneReport(history).markdown, /Daily unique cloners are not summed/);
 });
 
+test("same-day scheduled retries backfill yesterday after GitHub publishes delayed traffic", async (t) => {
+  const target = await directory(t);
+  const options = { token: "test-token", fetcher: ok(response(["2026-09-23", 15, 11])) };
+  await writeCloneReport(target, { ...options, now: timestamp("2026-09-25", "04") });
+  await writeCloneReport(target, { ...options, now: timestamp("2026-09-25", "10") });
+  const delayed = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
+  assert.equal(delayed.lastAttempt.status, "success");
+  assert.equal(row(delayed, "2026-09-24").clones, null);
+  assert.equal(summarizeClones(delayed).cumulativeClones, 15);
+
+  const recoveredAt = timestamp("2026-09-25", "16");
+  await writeCloneReport(target, { ...options, now: recoveredAt,
+    fetcher: ok(response(["2026-09-23", 15, 11], ["2026-09-24", 4, 2])) });
+  const recovered = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
+  assert.equal(row(recovered, "2026-09-24").clones, 4);
+  assert.equal(row(recovered, "2026-09-24").lastObservedAt, recoveredAt);
+  assert.equal(cloneDayStatus(row(recovered, "2026-09-24")), "reported");
+  assert.equal(row(recovered, "2026-09-25").clones, null);
+  assert.equal(summarizeClones(recovered).cumulativeClones, 19);
+  assert.equal((await readdir(join(target, "clones/collections"))).length, 3);
+  assert.match(await readFile(join(target, "clones/daily.csv"), "utf8"), /2026-09-24,4,2,reported/);
+  assert.doesNotMatch(await readFile(join(target, "clones/README.md"), "utf8"), /GitHub traffic is delayed/);
+});
+
 test("old partial days stay partial without a post-day observation; dates are UTC", () => {
   const first = mergeCloneHistory(null, success("2026-12-31", ["2026-12-31", 1, 1]));
   const next = mergeCloneHistory(first, failure("2027-01-02"));
@@ -230,7 +254,7 @@ test("download failures do not block clone reports; failures expose no subproces
 
 test("workflow stays trusted/main-only, shares the writer lock and does not gate failure persistence", async () => {
   const workflow = await readFile(".github/workflows/download-report.yml", "utf8");
-  assert.match(workflow, /cron: '41 4 \* \* \*'/);
+  assert.match(workflow, /cron: '41 4,10,16,22 \* \* \*'/);
   assert.match(workflow, /group: orchestrator-download-metrics/);
   assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);

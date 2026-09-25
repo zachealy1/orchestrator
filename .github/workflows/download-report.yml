@@ -1,7 +1,8 @@
 name: Public repository metrics
 on:
   schedule:
-    - cron: '41 4 * * *'
+    # Recheck within the day so delayed traffic can be backfilled sooner.
+    - cron: '41 4,10,16,22 * * *'
   workflow_dispatch:
   workflow_run:
     workflows: [Signed public beta, Community public beta]

@@ -1,6 +1,6 @@
 # Repository clone and download reporting
 
-The **Public repository metrics** workflow retains GitHub's aggregate clone counts alongside existing release-download reports on the `download-metrics` branch. It runs daily at **04:41 UTC**, after successful signed-release workflows from `main`, and on manual dispatch from `main`. It never writes reports to the source branch or changes the application.
+The **Public repository metrics** workflow retains GitHub's aggregate clone counts alongside existing release-download reports on the `download-metrics` branch. It is scheduled every six hours at **04:41, 10:41, 16:41 and 22:41 UTC**, after successful signed-release workflows from `main`, and on manual dispatch from `main`. GitHub can delay scheduled starts. It never writes reports to the source branch or changes the application.
 
 ## One-time setup
 
@@ -34,6 +34,8 @@ The first successful collection can backfill the available GitHub traffic window
 
 GitHub can return a delayed traffic window. The collector validates the span between returned dates (up to 15 UTC buckets), rather than rejecting an older boundary date relative to the request time. It retains those dated observations and leaves unreported recent dates as gaps. The report shows the latest UTC date returned by GitHub and flags a delay when it is earlier than yesterday. A successful collection means the response was valid and saved; it does not guarantee that GitHub has reported the latest activity. Future dates, duplicate dates, invalid counts and responses spanning more than 14 days remain rejected.
 
+A missing daily row does not mean that day's scan did not run. Compare the report's last-attempt timestamp with its latest date returned by GitHub. For example, a successful September 25 collection returning data only through September 23 leaves September 24 as a gap. Each later collection automatically backfills it once GitHub returns that date, including a retry later the same day. The six-hour schedule provides repeated chances to collect delayed data without waiting for the next day's run.
+
 Monthly and cumulative figures are **observed clone totals for the retained interval**, not guaranteed lifetime totals. Missing and partial days are shown alongside them. A month with no observations has an unavailable total, not zero. The first or current month may cover only part of the calendar month.
 
 Daily **unique cloners are not summed across dates**: the same person can occur on several days. Reports contain no names, emails, device identifiers, cloner identities or application-user telemetry. Clones are repository operations, not installer downloads, installations or active users. All these aggregate reports are public because the metrics branch is public.
@@ -45,6 +47,8 @@ Missing/expired credentials, permission denial, rate limits, network failures an
 Download collection and clone collection run independently: failure of either does not discard the other valid report. Corrupt prior clone history fails closed and is not replaced. Fix the credential or connectivity problem and rerun the workflow; a later successful request can recover gaps still covered by GitHub's rolling window. Expired gaps remain unknown.
 
 A workflow that never starts, cannot check out the repository, or cannot push cannot update its report. Check the last-attempt timestamp and Actions status if the report stops advancing. On recovery, missed dates are reconstructed as gaps or backfilled when the API still has them. Do not interpret a stale static report as a current zero.
+
+To refresh the reports immediately, run `gh workflow run download-report.yml --ref main`. The workflow runs from `main` and publishes to `download-metrics`; dispatching from the report branch is not supported. If the rerun succeeds but the latest returned date is unchanged, GitHub has not supplied newer data yet. Leave the gap intact for the next scheduled collection rather than inserting a zero or inventing a count.
 
 ## Local verification
 
