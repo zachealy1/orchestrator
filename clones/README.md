@@ -1,12 +1,12 @@
 # Orchestrator clone history
 
-Collection succeeded.
+**Collection incomplete: GitHub traffic is delayed.** The API request succeeded, but current clone counts are unavailable. The workflow reports this as a failure and will retry on its next scheduled run.
 
-Latest UTC date returned by GitHub: **2026-09-23**.
-**GitHub traffic is delayed.** Saved observations are retained; missing recent dates remain gaps.
+Latest UTC date returned by GitHub: **2026-09-23**. Expected through: **2026-09-26**.
+Saved observations are retained; missing recent dates remain gaps until GitHub supplies them.
 
 
-Last attempt: 2026-09-27T00:52:40.009Z. Last successful collection: 2026-09-27T00:52:40.009Z.
+Last attempt: 2026-09-27T08:24:21.235Z. Last valid API response: 2026-09-27T08:24:21.235Z (this may contain delayed data).
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
