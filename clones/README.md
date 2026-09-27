@@ -6,7 +6,7 @@ Latest UTC date returned by GitHub: **2026-09-23**. Expected through: **2026-09-
 Saved observations are retained; missing recent dates remain gaps until GitHub supplies them.
 
 
-Last attempt: 2026-09-27T15:18:29.669Z. Last valid API response: 2026-09-27T15:18:29.669Z (this may contain delayed data).
+Last attempt: 2026-09-27T19:52:35.054Z. Last valid API response: 2026-09-27T19:52:35.054Z (this may contain delayed data).
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
