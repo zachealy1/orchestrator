@@ -77,6 +77,17 @@ function validateAttempt(attempt) {
   }
 }
 
+// A valid API response can still contain a stalled traffic window. Keep its
+// observations, but do not report a healthy run until it reaches yesterday UTC.
+// Derive health so existing schema-v1 snapshots remain readable unchanged.
+export function cloneCollectionHealth(attempt) {
+  validateAttempt(attempt);
+  const latestDay = attempt.days.map((row) => row.date).sort().at(-1) ?? null;
+  const expectedThrough = shift(dayOf(attempt.timestamp), -1);
+  const error = attempt.error ?? (!latestDay || latestDay < expectedThrough ? "stale_traffic" : null);
+  return { ok: error === null, error, latestDay, expectedThrough };
+}
+
 export function validateCloneHistory(history) {
   if (!history || history.schemaVersion !== 1 || history.repository !== REPOSITORY || !Array.isArray(history.days)) throw new Error("Invalid clone history; refusing to replace it");
   instant(history.collectionStartedAt); instant(history.updatedAt); date(history.coverageStartedOn);
@@ -144,17 +155,20 @@ export function renderCloneReport(history) {
   const summary = summarizeClones(history);
   const dailyCsv = "utc_date,clones,unique_cloners,status,last_observed_at\n" + history.days.map((row) => [row.date, row.clones ?? "", row.uniqueCloners ?? "", cloneDayStatus(row), row.lastObservedAt ?? ""].join(",")).join("\n") + "\n";
   const monthlyCsv = "utc_month,observed_clones,reported_days,missing_days,partial_days\n" + summary.months.map((row) => [row.month, row.observedClones ?? "", row.reportedDays, row.missingDays, row.partialDays].join(",")).join("\n") + "\n";
-  const health = history.lastAttempt.status === "failed" ? `**Collection failed:** ${CLONE_ERRORS[history.lastAttempt.error]}` : "Collection succeeded.";
-  const latestDay = history.lastAttempt.days.at(-1)?.date;
+  const collection = cloneCollectionHealth(history.lastAttempt);
+  const health = history.lastAttempt.status === "failed" ? `**Collection failed:** ${CLONE_ERRORS[history.lastAttempt.error]}`
+    : collection.ok ? "Collection succeeded."
+    : "**Collection incomplete: GitHub traffic is delayed.** The API request succeeded, but current clone counts are unavailable. The workflow reports this as a failure and will retry on its next scheduled run.";
+  const { latestDay, expectedThrough } = collection;
   const freshness = history.lastAttempt.status === "failed" ? "" : latestDay
-    ? `\nLatest UTC date returned by GitHub: **${latestDay}**.\n${latestDay < shift(dayOf(history.updatedAt), -1) ? "**GitHub traffic is delayed.** Saved observations are retained; missing recent dates remain gaps.\n" : ""}`
-    : "\nGitHub returned no daily traffic. Saved observations are retained; missing dates remain gaps.\n";
+    ? `\nLatest UTC date returned by GitHub: **${latestDay}**. Expected through: **${expectedThrough}**.\n${!collection.ok ? "Saved observations are retained; missing recent dates remain gaps until GitHub supplies them.\n" : ""}`
+    : `\nGitHub returned no daily traffic. Expected through: **${expectedThrough}**. Saved observations are retained; missing dates remain gaps.\n`;
   const markdown = `# Orchestrator clone history
 
 ${health}
 ${freshness}
 
-Last attempt: ${history.updatedAt}. Last successful collection: ${history.lastSuccessfulCollectionAt ?? "none"}.
+Last attempt: ${history.updatedAt}. Last valid API response: ${history.lastSuccessfulCollectionAt ?? "none"} (this may contain delayed data).
 Collection began ${history.collectionStartedAt}; retained daily coverage begins ${history.coverageStartedOn}, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 

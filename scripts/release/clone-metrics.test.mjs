@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
-import { collectCloneTraffic, normalizeCloneTraffic, mergeCloneHistory, summarizeClones, renderCloneReport, cloneDayStatus } from "./clone-metrics.mjs";
+import { cloneCollectionHealth, collectCloneTraffic, normalizeCloneTraffic, mergeCloneHistory, summarizeClones, renderCloneReport, cloneDayStatus } from "./clone-metrics.mjs";
 import { writeCloneReport } from "./clone-report.mjs";
 import { prepareRepositoryReports } from "./repository-report.mjs";
 
@@ -74,13 +74,26 @@ test("a delayed response retains its full window across collection dates", () =>
   assert.equal(normalizeCloneTraffic(boundary, timestamp("2026-09-20")).length, 15);
 });
 
+test("collection health detects stale and empty traffic, accepts explicit zeroes and uses UTC boundaries", () => {
+  for (const [latest, expectedError] of [["2026-09-23", "stale_traffic"], [null, "stale_traffic"], ["2026-09-26", null], ["2026-09-27", null]]) {
+    const attempt = success("2026-09-27", ...(latest ? [[latest, 0, 0]] : []));
+    assert.deepEqual(cloneCollectionHealth(attempt), {
+      ok: expectedError === null, error: expectedError, latestDay: latest, expectedThrough: "2026-09-26",
+    });
+  }
+  const attempt = success("2026-12-31", ["2026-12-30", 5, 2]);
+  assert.equal(cloneCollectionHealth({ ...attempt, timestamp: "2026-12-31T23:59:59.999Z" }).ok, true);
+  assert.equal(cloneCollectionHealth({ ...attempt, timestamp: "2027-01-01T00:00:00.000Z" }).error, "stale_traffic");
+  assert.equal(cloneCollectionHealth(failure("2026-09-27")).error, "network_error");
+});
+
 test("delayed collection recovers a failed report, preserves history and flags recent gaps", async (t) => {
   const target = await directory(t);
   const options = { token: "test-token", fetcher: ok(response(["2026-08-31", 1, 1], ["2026-09-13", 66, 34])) };
   await writeCloneReport(target, { ...options, now: timestamp("2026-09-14") });
   await writeCloneReport(target, { token: "", now: timestamp("2026-09-15") });
   const retryAt = timestamp("2026-09-15", "06");
-  assert.deepEqual(await writeCloneReport(target, { ...options, now: retryAt }), { ok: true, error: null });
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: retryAt }), { ok: false, error: "stale_traffic" });
   const saved = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
   assert.equal(saved.lastSuccessfulCollectionAt, retryAt);
   assert.equal(row(saved, "2026-08-31").clones, 1);
@@ -88,17 +101,34 @@ test("delayed collection recovers a failed report, preserves history and flags r
   assert.equal(row(saved, "2026-09-14").clones, null);
   assert.equal(row(saved, "2026-09-15").clones, null);
   const markdown = await readFile(join(target, "clones/README.md"), "utf8");
-  assert.match(markdown, /Collection succeeded/);
+  assert.match(markdown, /Collection incomplete/);
+  assert.doesNotMatch(markdown, /Collection succeeded/);
   assert.match(markdown, /Latest UTC date returned by GitHub: \*\*2026-09-13\*\*/);
+  assert.match(markdown, /Expected through: \*\*2026-09-14\*\*/);
+  assert.match(markdown, /Last valid API response/);
   assert.match(markdown, /GitHub traffic is delayed/);
   assert.match(await readFile(join(target, "clones/daily.csv"), "utf8"), /2026-09-14,,,gap,/);
   // A later report must still load the saved delayed attempt and fill gaps.
-  await writeCloneReport(target, { ...options, now: timestamp("2026-09-16"), fetcher: ok(response(["2026-09-14", 4, 2], ["2026-09-15", 0, 0])) });
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: timestamp("2026-09-16"), fetcher: ok(response(["2026-09-14", 4, 2], ["2026-09-15", 0, 0])) }), { ok: true, error: null });
   const recovered = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
   assert.equal(summarizeClones(recovered).cumulativeClones, 71);
   assert.equal(row(recovered, "2026-09-14").clones, 4);
   assert.equal(row(recovered, "2026-09-15").clones, 0);
   assert.doesNotMatch(await readFile(join(target, "clones/README.md"), "utf8"), /GitHub traffic is delayed/);
+});
+
+test("empty traffic is incomplete without erasing retained counts, and an older retry cannot downgrade the report", async (t) => {
+  const target = await directory(t);
+  const options = { token: "test-token", now: timestamp("2026-09-27"), fetcher: ok(response(["2026-09-26", 5, 2])) };
+  await writeCloneReport(target, options);
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: timestamp("2026-09-25"), fetcher: ok(response(["2026-09-23", 3, 1])) }), { ok: false, error: "stale_traffic" });
+  assert.match(await readFile(join(target, "clones/README.md"), "utf8"), /Collection succeeded/);
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: timestamp("2026-09-28"), fetcher: ok(response()) }), { ok: false, error: "stale_traffic" });
+  const history = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
+  assert.equal(row(history, "2026-09-26").clones, 5);
+  assert.equal(row(history, "2026-09-27").clones, null);
+  assert.match(await readFile(join(target, "clones/README.md"), "utf8"), /GitHub returned no daily traffic/);
+  assert.doesNotMatch(await readFile(join(target, "clones/README.md"), "utf8"), /Collection succeeded/);
 });
 
 test("history survives the rolling window, backfills recoverable gaps and keeps expired gaps", () => {
@@ -120,16 +150,16 @@ test("history survives the rolling window, backfills recoverable gaps and keeps 
 test("same-day scheduled retries backfill yesterday after GitHub publishes delayed traffic", async (t) => {
   const target = await directory(t);
   const options = { token: "test-token", fetcher: ok(response(["2026-09-23", 15, 11])) };
-  await writeCloneReport(target, { ...options, now: timestamp("2026-09-25", "04") });
-  await writeCloneReport(target, { ...options, now: timestamp("2026-09-25", "10") });
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: timestamp("2026-09-25", "04") }), { ok: false, error: "stale_traffic" });
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: timestamp("2026-09-25", "10") }), { ok: false, error: "stale_traffic" });
   const delayed = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
   assert.equal(delayed.lastAttempt.status, "success");
   assert.equal(row(delayed, "2026-09-24").clones, null);
   assert.equal(summarizeClones(delayed).cumulativeClones, 15);
 
   const recoveredAt = timestamp("2026-09-25", "16");
-  await writeCloneReport(target, { ...options, now: recoveredAt,
-    fetcher: ok(response(["2026-09-23", 15, 11], ["2026-09-24", 4, 2])) });
+  assert.deepEqual(await writeCloneReport(target, { ...options, now: recoveredAt,
+    fetcher: ok(response(["2026-09-23", 15, 11], ["2026-09-24", 4, 2])) }), { ok: true, error: null });
   const recovered = JSON.parse(await readFile(join(target, "clones/history.json"), "utf8"));
   assert.equal(row(recovered, "2026-09-24").clones, 4);
   assert.equal(row(recovered, "2026-09-24").lastObservedAt, recoveredAt);
@@ -269,7 +299,7 @@ test("workflow stays trusted/main-only, shares the writer lock and does not gate
   assert.doesNotMatch(store, /push[^\n]*(?:--force|refs\/heads\/main)/);
 });
 
-test("store CLI publishes failure history to an isolated local remote before exiting unsuccessfully", async (t) => {
+for (const scenario of ["permission", "stale", "empty", "current"]) test(`store CLI publishes ${scenario} traffic to an isolated local remote before reporting its health`, async (t) => {
   const base = await directory(t), repository = join(base, "repo"), remote = join(base, "remote.git"), bin = join(base, "bin");
   await mkdir(repository); await mkdir(bin);
   const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
@@ -290,20 +320,30 @@ test("store CLI publishes failure history to an isolated local remote before exi
   await writeFile(join(bin, "git"), `#!${process.execPath}\nconst {spawnSync}=require('node:child_process');\nconst args=process.argv.slice(2);\nif(args.join(' ')==='remote get-url origin') { console.log('https://github.com/zachealy1/orchestrator.git'); } else { const result=spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit'});process.exit(result.status??1); }\n`);
   await chmod(join(bin, "git"), 0o755);
   const preload = join(base, "mock-github.mjs");
-  await writeFile(preload, `globalThis.fetch=async(url)=>{if(url.endsWith('/traffic/clones?per=day'))return {ok:false,status:403,headers:new Headers(),json:async()=>{throw new Error(process.env.REPO_TRAFFIC_TOKEN)}};return {ok:true,status:200,json:async()=>url.includes('/releases?')?[]:{id:1361268700,full_name:'zachealy1/orchestrator'}}};\n`);
+  const reportedDay = new Date(Date.now() - (scenario === "current" ? 1 : 4) * 86_400_000).toISOString().slice(0, 10);
+  const traffic = response(...(scenario === "empty" ? [] : [[reportedDay, 15, 11]]));
+  const mockResponse = scenario === "permission" ? `{ok:false,status:403,headers:new Headers(),json:async()=>{throw new Error(process.env.REPO_TRAFFIC_TOKEN)}}`
+    : `{ok:true,json:async()=>(${JSON.stringify(traffic)})}`;
+  await writeFile(preload, `globalThis.fetch=async(url)=>{if(url.endsWith('/traffic/clones?per=day'))return ${mockResponse};return {ok:true,status:200,json:async()=>url.includes('/releases?')?[]:{id:1361268700,full_name:'zachealy1/orchestrator'}}};\n`);
   const canary = "synthetic-traffic-secret-not-real";
   const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, resolve("scripts/release/store-download-report.mjs")], {
     cwd: repository, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, REPO_TRAFFIC_TOKEN: canary,
       GH_TOKEN: "synthetic-download-token", NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` }, timeout: 20_000,
   });
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /clone_permission/);
+  assert.equal(result.status, scenario === "current" ? 0 : 1, result.stderr);
+  if (scenario !== "current") assert.match(result.stderr, scenario === "permission" ? /clone_permission/ : /clone_stale_traffic/);
   assert.ok(!(result.stdout + result.stderr).includes(canary));
   assert.equal(git("--git-dir", remote, "rev-parse", "refs/heads/main").trim(), main);
   assert.equal(git("--git-dir", remote, "show", "download-metrics:keep.txt"), "existing metrics history\n");
   const history = JSON.parse(git("--git-dir", remote, "show", "download-metrics:clones/history.json"));
-  assert.equal(history.lastAttempt.error, "permission");
-  assert.ok(history.days.every((value) => value.clones === null));
+  assert.equal(history.lastAttempt.error, scenario === "permission" ? "permission" : null);
+  if (["permission", "empty"].includes(scenario)) assert.ok(history.days.every((value) => value.clones === null));
+  else assert.equal(row(history, reportedDay).clones, 15);
+  const markdown = git("--git-dir", remote, "show", "download-metrics:clones/README.md");
+  if (["stale", "empty"].includes(scenario)) {
+    assert.match(markdown, /Collection incomplete/);
+    assert.doesNotMatch(markdown, /Collection succeeded/);
+  }
   assert.match(git("--git-dir", remote, "show", "download-metrics:README.md"), /clones\/README.md/);
   assert.ok(!git("worktree", "list").includes("orchestrator-download-report-"));
 });

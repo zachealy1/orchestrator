@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { collectCloneTraffic, mergeCloneHistory, renderCloneReport, validateCloneHistory } from "./clone-metrics.mjs";
+import { cloneCollectionHealth, collectCloneTraffic, mergeCloneHistory, renderCloneReport, validateCloneHistory } from "./clone-metrics.mjs";
 
 export async function writeCloneReport(directory, options = {}) {
   const target = join(directory, "clones");
@@ -22,12 +22,13 @@ export async function writeCloneReport(directory, options = {}) {
   await writeFile(join(target, "daily.csv"), report.dailyCsv);
   await writeFile(join(target, "monthly.csv"), report.monthlyCsv);
   await writeFile(join(target, "README.md"), report.markdown);
-  return { ok: attempt.status === "success", error: attempt.error };
+  const { ok, error } = cloneCollectionHealth(attempt);
+  return { ok, error };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     const result = await writeCloneReport(resolve(process.argv[2] ?? "download-metrics"), { token: process.env.REPO_TRAFFIC_TOKEN });
-    if (!result.ok) { console.error(`Clone collection failed (${result.error}); gap report saved.`); process.exitCode = 1; }
+    if (!result.ok) { console.error(`Clone collection incomplete (${result.error}); available observations and gap report saved.`); process.exitCode = 1; }
   } catch { console.error("Clone report generation failed; no report should be published from this attempt."); process.exitCode = 1; }
 }
