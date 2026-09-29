@@ -2,17 +2,17 @@
 
 **Collection incomplete: GitHub traffic is delayed.** The API request succeeded, but current clone counts are unavailable. The workflow reports this as a failure and will retry on its next scheduled run.
 
-Latest UTC date returned by GitHub: **2026-09-23**. Expected through: **2026-09-27**.
+Latest UTC date returned by GitHub: **2026-09-23**. Expected through: **2026-09-28**.
 Saved observations are retained; missing recent dates remain gaps until GitHub supplies them.
 
 
-Last attempt: 2026-09-28T22:16:41.071Z. Last valid API response: 2026-09-28T22:16:41.071Z (this may contain delayed data).
+Last attempt: 2026-09-29T02:18:41.450Z. Last valid API response: 2026-09-29T02:18:41.450Z (this may contain delayed data).
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
 ## Observed totals
 
-**1115 observed clones** across the retained history. Missing days: **5**. Partial days: **0**.
+**1115 observed clones** across the retained history. Missing days: **6**. Partial days: **0**.
 This total is incomplete: missing and partial days are not assumed to be zero.
 
 These are repository clone operations, not downloads, installations, unique people or active users. Daily unique cloners are not summed across dates. No cloner identities or application-user telemetry are collected. These aggregate reports are public.
@@ -24,12 +24,13 @@ Totals cover recorded days only, not necessarily an entire calendar month.
 | UTC month | Observed clones | Reported days | Missing days | Partial days |
 |---|---:|---:|---:|---:|
 | 2026-08 | 0 | 6 | 0 | 0 |
-| 2026-09 | 1115 | 23 | 5 | 0 |
+| 2026-09 | 1115 | 23 | 6 | 0 |
 
 ## Daily activity (latest 30 days)
 
 | UTC date | Clones | Unique cloners | Status |
 |---|---:|---:|---|
+| 2026-09-29 | — | — | gap |
 | 2026-09-28 | — | — | gap |
 | 2026-09-27 | — | — | gap |
 | 2026-09-26 | — | — | gap |
@@ -59,7 +60,6 @@ Totals cover recorded days only, not necessarily an entire calendar month.
 | 2026-09-02 | 0 | 0 | reported |
 | 2026-09-01 | 0 | 0 | reported |
 | 2026-08-31 | 0 | 0 | reported |
-| 2026-08-30 | 0 | 0 | reported |
 
 A gap means no daily count was received, not zero clones. Partial means the latest observation was made during that UTC day. Failed checks retain previously observed counts. Later successful checks can recover gaps within GitHub's rolling 14-day window; older gaps remain unknown. Corrections replace the same dated row instead of adding overlapping totals.
 
