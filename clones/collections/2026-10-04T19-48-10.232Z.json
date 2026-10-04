@@ -1,0 +1,77 @@
+{
+  "timestamp": "2026-10-04T19:48:10.232Z",
+  "status": "success",
+  "error": null,
+  "days": [
+    {
+      "date": "2026-09-20",
+      "clones": 16,
+      "uniqueCloners": 10
+    },
+    {
+      "date": "2026-09-21",
+      "clones": 16,
+      "uniqueCloners": 13
+    },
+    {
+      "date": "2026-09-22",
+      "clones": 2,
+      "uniqueCloners": 2
+    },
+    {
+      "date": "2026-09-23",
+      "clones": 15,
+      "uniqueCloners": 11
+    },
+    {
+      "date": "2026-09-24",
+      "clones": 3,
+      "uniqueCloners": 3
+    },
+    {
+      "date": "2026-09-25",
+      "clones": 32,
+      "uniqueCloners": 16
+    },
+    {
+      "date": "2026-09-26",
+      "clones": 41,
+      "uniqueCloners": 22
+    },
+    {
+      "date": "2026-09-27",
+      "clones": 72,
+      "uniqueCloners": 39
+    },
+    {
+      "date": "2026-09-28",
+      "clones": 32,
+      "uniqueCloners": 22
+    },
+    {
+      "date": "2026-09-29",
+      "clones": 35,
+      "uniqueCloners": 24
+    },
+    {
+      "date": "2026-09-30",
+      "clones": 24,
+      "uniqueCloners": 16
+    },
+    {
+      "date": "2026-10-01",
+      "clones": 27,
+      "uniqueCloners": 17
+    },
+    {
+      "date": "2026-10-02",
+      "clones": 16,
+      "uniqueCloners": 9
+    },
+    {
+      "date": "2026-10-03",
+      "clones": 20,
+      "uniqueCloners": 13
+    }
+  ]
+}
