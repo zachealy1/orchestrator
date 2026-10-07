@@ -3,10 +3,10 @@
   "repository": "zachealy1/orchestrator",
   "collectionStartedAt": "2026-09-08T18:31:03.080Z",
   "coverageStartedOn": "2026-08-26",
-  "updatedAt": "2026-10-06T21:14:14.903Z",
-  "lastSuccessfulCollectionAt": "2026-10-06T21:14:14.903Z",
+  "updatedAt": "2026-10-07T01:48:55.490Z",
+  "lastSuccessfulCollectionAt": "2026-10-07T01:48:55.490Z",
   "lastAttempt": {
-    "timestamp": "2026-10-06T21:14:14.903Z",
+    "timestamp": "2026-10-07T01:48:55.490Z",
     "status": "success",
     "error": null,
     "days": [
@@ -249,88 +249,94 @@
       "date": "2026-09-22",
       "clones": 2,
       "uniqueCloners": 2,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-23",
       "clones": 15,
       "uniqueCloners": 11,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-24",
       "clones": 3,
       "uniqueCloners": 3,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-25",
       "clones": 32,
       "uniqueCloners": 16,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-26",
       "clones": 41,
       "uniqueCloners": 22,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-27",
       "clones": 72,
       "uniqueCloners": 39,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-28",
       "clones": 32,
       "uniqueCloners": 22,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-29",
       "clones": 35,
       "uniqueCloners": 24,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-09-30",
       "clones": 24,
       "uniqueCloners": 16,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-10-01",
       "clones": 27,
       "uniqueCloners": 17,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-10-02",
       "clones": 16,
       "uniqueCloners": 9,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-10-03",
       "clones": 20,
       "uniqueCloners": 13,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-10-04",
       "clones": 30,
       "uniqueCloners": 17,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-10-05",
       "clones": 38,
       "uniqueCloners": 23,
-      "lastObservedAt": "2026-10-06T21:14:14.903Z"
+      "lastObservedAt": "2026-10-07T01:48:55.490Z"
     },
     {
       "date": "2026-10-06",
+      "clones": null,
+      "uniqueCloners": null,
+      "lastObservedAt": null
+    },
+    {
+      "date": "2026-10-07",
       "clones": null,
       "uniqueCloners": null,
       "lastObservedAt": null
