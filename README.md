@@ -1,14 +1,14 @@
 # Orchestrator downloads
 
-Updated 2026-10-11T11:01:20.459Z. Previous snapshot: 2026-10-11T01:14:43.841Z.
+Updated 2026-10-11T20:34:41.858Z. Previous snapshot: 2026-10-11T11:01:20.459Z.
 
 Downloads are not unique users, installations or active users. Retries, CI verification and automation count. Asset IDs preserve removed/replaced asset history. Counter decreases are flagged in snapshots and never shown as negative downloads. Underlying GitHub counters are public; this report is public.
 
 | Version | Architecture | Asset | Downloads | Since previous snapshot |
 |---|---|---|---:|---:|
 | v0.2.0-beta.1 | aarch64 | installer | 4 | 0 |
-| v0.2.0-beta.2 | aarch64 | installer | 17 | 1 |
-| v0.2.0-beta.2 | aarch64 | update | 3 | 1 |
+| v0.2.0-beta.2 | aarch64 | installer | 17 | 0 |
+| v0.2.0-beta.2 | aarch64 | update | 3 | 0 |
 | v0.2.0-beta.2 | x86_64 | installer | 12 | 0 |
 | v0.2.0-beta.2 | x86_64 | update | 3 | 0 |
 | v0.2.0-beta.3 | aarch64 | installer | 6 | 0 |
