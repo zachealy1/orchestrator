@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-10-11T01:14:43.841Z",
-  "previousTimestamp": "2026-10-10T20:19:17.166Z",
+  "timestamp": "2026-10-11T11:01:20.459Z",
+  "previousTimestamp": "2026-10-11T01:14:43.841Z",
   "assets": [
     {
       "id": 571120789,
@@ -47,8 +47,8 @@
       "version": "v0.2.0-beta.2",
       "architecture": "aarch64",
       "kind": "update",
-      "downloads": 2,
-      "change": 0,
+      "downloads": 3,
+      "change": 1,
       "counterReset": false,
       "missing": false
     },
@@ -57,8 +57,8 @@
       "version": "v0.2.0-beta.2",
       "architecture": "aarch64",
       "kind": "installer",
-      "downloads": 16,
-      "change": 0,
+      "downloads": 17,
+      "change": 1,
       "counterReset": false,
       "missing": false
     },
