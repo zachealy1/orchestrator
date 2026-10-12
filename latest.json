@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-10-12T12:27:16.929Z",
-  "previousTimestamp": "2026-10-12T01:47:36.700Z",
+  "timestamp": "2026-10-12T23:13:43.854Z",
+  "previousTimestamp": "2026-10-12T12:27:16.929Z",
   "assets": [
     {
       "id": 571120789,
@@ -67,8 +67,8 @@
       "version": "v0.2.0-beta.2",
       "architecture": "x86_64",
       "kind": "update",
-      "downloads": 3,
-      "change": 0,
+      "downloads": 4,
+      "change": 1,
       "counterReset": false,
       "missing": false
     },
