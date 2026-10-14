@@ -5,7 +5,7 @@ Collection succeeded.
 Latest UTC date returned by GitHub: **2026-10-13**. Expected through: **2026-10-13**.
 
 
-Last attempt: 2026-10-14T15:29:45.239Z. Last valid API response: 2026-10-14T15:29:45.239Z (this may contain delayed data).
+Last attempt: 2026-10-14T20:20:08.278Z. Last valid API response: 2026-10-14T20:20:08.278Z (this may contain delayed data).
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
