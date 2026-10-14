@@ -1,6 +1,6 @@
 # Orchestrator downloads
 
-Updated 2026-10-14T01:24:11.685Z. Previous snapshot: 2026-10-13T21:33:22.551Z.
+Updated 2026-10-14T09:44:15.694Z. Previous snapshot: 2026-10-14T01:24:11.685Z.
 
 Downloads are not unique users, installations or active users. Retries, CI verification and automation count. Asset IDs preserve removed/replaced asset history. Counter decreases are flagged in snapshots and never shown as negative downloads. Underlying GitHub counters are public; this report is public.
 
