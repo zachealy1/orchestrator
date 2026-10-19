@@ -1,18 +1,17 @@
 # Orchestrator clone history
 
-**Collection incomplete: GitHub traffic is delayed.** The API request succeeded, but current clone counts are unavailable. The workflow reports this as a failure and will retry on its next scheduled run.
+Collection succeeded.
 
-Latest UTC date returned by GitHub: **2026-10-17**. Expected through: **2026-10-18**.
-Saved observations are retained; missing recent dates remain gaps until GitHub supplies them.
+Latest UTC date returned by GitHub: **2026-10-18**. Expected through: **2026-10-18**.
 
 
-Last attempt: 2026-10-19T00:30:35.554Z. Last valid API response: 2026-10-19T00:30:35.554Z (this may contain delayed data).
+Last attempt: 2026-10-19T10:18:19.407Z. Last valid API response: 2026-10-19T10:18:19.407Z (this may contain delayed data).
 Collection began 2026-09-08T18:31:03.080Z; retained daily coverage begins 2026-08-26, including the initial available backfill.
 All dates use UTC. This static report is current only through its last attempt; check the workflow if that timestamp stops advancing.
 
 ## Observed totals
 
-**1867 observed clones** across the retained history. Missing days: **2**. Partial days: **0**.
+**1889 observed clones** across the retained history. Missing days: **1**. Partial days: **0**.
 This total is incomplete: missing and partial days are not assumed to be zero.
 
 These are repository clone operations, not downloads, installations, unique people or active users. Daily unique cloners are not summed across dates. No cloner identities or application-user telemetry are collected. These aggregate reports are public.
@@ -25,14 +24,14 @@ Totals cover recorded days only, not necessarily an entire calendar month.
 |---|---:|---:|---:|---:|
 | 2026-08 | 0 | 6 | 0 | 0 |
 | 2026-09 | 1354 | 30 | 0 | 0 |
-| 2026-10 | 513 | 17 | 2 | 0 |
+| 2026-10 | 535 | 18 | 1 | 0 |
 
 ## Daily activity (latest 30 days)
 
 | UTC date | Clones | Unique cloners | Status |
 |---|---:|---:|---|
 | 2026-10-19 | — | — | gap |
-| 2026-10-18 | — | — | gap |
+| 2026-10-18 | 22 | 10 | reported |
 | 2026-10-17 | 23 | 11 | reported |
 | 2026-10-16 | 42 | 24 | reported |
 | 2026-10-15 | 43 | 25 | reported |
