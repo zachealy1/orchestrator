@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-10-22T09:38:25.776Z",
-  "previousTimestamp": "2026-10-22T00:54:21.743Z",
+  "timestamp": "2026-10-22T15:39:55.768Z",
+  "previousTimestamp": "2026-10-22T09:38:25.776Z",
   "assets": [
     {
       "id": 571120789,
@@ -10,7 +10,7 @@
       "downloads": 3,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 571091761,
@@ -20,7 +20,7 @@
       "downloads": 7,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 571121732,
@@ -30,7 +30,7 @@
       "downloads": 3,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 571122735,
@@ -40,7 +40,7 @@
       "downloads": 4,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 559226415,
@@ -50,7 +50,7 @@
       "downloads": 4,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 559226167,
@@ -60,7 +60,7 @@
       "downloads": 18,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 559227000,
@@ -70,7 +70,7 @@
       "downloads": 4,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 559226736,
@@ -80,7 +80,7 @@
       "downloads": 13,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     },
     {
       "id": 551212293,
@@ -90,7 +90,7 @@
       "downloads": 5,
       "change": 0,
       "counterReset": false,
-      "missing": false
+      "missing": true
     }
   ]
 }
