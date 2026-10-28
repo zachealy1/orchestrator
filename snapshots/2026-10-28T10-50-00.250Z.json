@@ -1,0 +1,96 @@
+{
+  "timestamp": "2026-10-28T10:50:00.250Z",
+  "previousTimestamp": "2026-10-28T01:43:32.030Z",
+  "assets": [
+    {
+      "id": 571120789,
+      "version": "v0.2.0-beta.3",
+      "architecture": "aarch64",
+      "kind": "update",
+      "downloads": 3,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 571091761,
+      "version": "v0.2.0-beta.3",
+      "architecture": "aarch64",
+      "kind": "installer",
+      "downloads": 7,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 571121732,
+      "version": "v0.2.0-beta.3",
+      "architecture": "x86_64",
+      "kind": "update",
+      "downloads": 3,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 571122735,
+      "version": "v0.2.0-beta.3",
+      "architecture": "x86_64",
+      "kind": "installer",
+      "downloads": 4,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 559226415,
+      "version": "v0.2.0-beta.2",
+      "architecture": "aarch64",
+      "kind": "update",
+      "downloads": 4,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 559226167,
+      "version": "v0.2.0-beta.2",
+      "architecture": "aarch64",
+      "kind": "installer",
+      "downloads": 18,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 559227000,
+      "version": "v0.2.0-beta.2",
+      "architecture": "x86_64",
+      "kind": "update",
+      "downloads": 4,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 559226736,
+      "version": "v0.2.0-beta.2",
+      "architecture": "x86_64",
+      "kind": "installer",
+      "downloads": 13,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    },
+    {
+      "id": 551212293,
+      "version": "v0.2.0-beta.1",
+      "architecture": "aarch64",
+      "kind": "installer",
+      "downloads": 5,
+      "change": 0,
+      "counterReset": false,
+      "missing": false
+    }
+  ]
+}
