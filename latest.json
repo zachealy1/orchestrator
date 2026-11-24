@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-11-23T15:23:23.043Z",
-  "previousTimestamp": "2026-11-23T03:08:16.520Z",
+  "timestamp": "2026-11-24T03:03:18.015Z",
+  "previousTimestamp": "2026-11-23T15:23:23.043Z",
   "assets": [
     {
       "id": 571120789,
@@ -18,7 +18,7 @@
       "architecture": "aarch64",
       "kind": "installer",
       "downloads": 10,
-      "change": 1,
+      "change": 0,
       "counterReset": false,
       "missing": false
     },
